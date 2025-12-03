@@ -60,32 +60,41 @@ async def stat(interaction: discord.Interaction):
 
 @tree.command()
 async def status(interaction: discord.Interaction):
-    """獲取實時交易狀態報告"""
+    """獲取實時交易狀態報告（從 API 獲取最新數據）"""
     if not trading_bot_instance:
         await interaction.response.send_message("❌ 交易機器人未連接")
         return
-        
-    await interaction.response.defer()  # 延遲回應，因為生成報告可能需要時間
-    
+
+    await interaction.response.defer()  # 延遲回應，因為 API 請求需要時間
+
     try:
-        # 獲取報告數據
-        report = trading_bot_instance.get_status_report_dict()
+        # 從 API 獲取實時數據
+        report = await trading_bot_instance.get_status_report_dict(fetch_realtime=True)
         
         embed = discord.Embed(
             title=f"📊 實時交易狀態報告",
-            description=f"時間: {report['timestamp']}",
+            description=f"時間: {report['timestamp']}\n數據來源: **{report['data_source']}**",
             color=discord.Color.green()
         )
-        
+
         # 帳戶概況
         acc = report['account']
-        embed.add_field(name="💰 帳戶概況", value=f"""
-        當前餘額: ${acc['current_balance']:.2f}
-        初始餘額: ${acc['initial_balance']:.2f}
-        總盈虧: ${acc['total_pnl']:.2f} ({acc['pnl_percent']:.2f}%)
-        最大回撤: {acc['drawdown']:.2f}%
-        勝率: {acc['win_rate']:.1f}%
-        """, inline=False)
+        account_text = f"""
+當前餘額: ${acc['current_balance']:.2f}
+初始餘額: ${acc['initial_balance']:.2f}
+總盈虧: ${acc['total_pnl']:.2f} ({acc['pnl_percent']:.2f}%)
+最大回撤: {acc['drawdown']:.2f}%
+勝率: {acc['win_rate']:.1f}%
+"""
+        # 如果有額外字段（實時數據）
+        if 'total_asset_value' in acc:
+            account_text += f"總資產: ${acc['total_asset_value']:.2f}\n"
+        if 'available_balance' in acc:
+            account_text += f"可用餘額: ${acc['available_balance']:.2f}\n"
+        if 'leverage' in acc:
+            account_text += f"槓桿: {acc['leverage']:.1f}x\n"
+
+        embed.add_field(name="💰 帳戶概況", value=account_text, inline=False)
         
         # 持倉狀態
         if report['positions']:
@@ -94,8 +103,17 @@ async def status(interaction: discord.Interaction):
                 pos_text += f"**{p['symbol']}** ({p['side']})\n"
                 pos_text += f"數量: {p['size']:.6f} @ ${p['entry_price']:.2f}\n"
                 pos_text += f"PnL: ${p['pnl']:.2f} ({p['pnl_percent']:.2f}%)\n"
+
+                # 策略信息
                 if p.get('strategy'):
                     pos_text += f"策略: {p['strategy']} | SL: ${p['sl']:.2f} | TP: ${p['tp']:.2f}\n"
+
+                # 實時數據額外字段
+                if p.get('liquidation_price'):
+                    pos_text += f"清算價: ${p['liquidation_price']:.2f}\n"
+                if p.get('leverage'):
+                    pos_text += f"槓桿: {p['leverage']:.1f}x\n"
+
                 pos_text += "---\n"
             embed.add_field(name="📈 持倉狀態", value=pos_text, inline=False)
         else:

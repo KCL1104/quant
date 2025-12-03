@@ -192,6 +192,9 @@ class TradingConfig(BaseSettings):
     cooldown_after_loss: int = 300        # 虧損後冷卻期 (秒)
     cooldown_after_consecutive_loss: int = 1800  # 連續虧損後冷卻期 (秒)
 
+    # 帳戶同步
+    account_sync_interval: int = 30       # 帳戶數據同步間隔 (秒)，建議 30-60 秒
+
 
 class Settings(BaseSettings):
     """主配置類"""

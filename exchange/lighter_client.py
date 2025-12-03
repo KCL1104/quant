@@ -404,7 +404,7 @@ class LighterClientAdapter:
         try:
             # 獲取當前市場價格進行驗證
             from .data_fetcher import DataFetcher
-            data_fetcher = DataFetcher(self._client, self.config)
+            data_fetcher = DataFetcher()
             current_price = await data_fetcher.get_current_price(market_id=market_id)
 
             if current_price <= 0:
@@ -518,7 +518,7 @@ class LighterClientAdapter:
         try:
             # 獲取當前市場價格進行驗證
             from .data_fetcher import DataFetcher
-            data_fetcher = DataFetcher(self._client, self.config)
+            data_fetcher = DataFetcher()
             current_price = await data_fetcher.get_current_price(market_id=market_id)
 
             if current_price <= 0:

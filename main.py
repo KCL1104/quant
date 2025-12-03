@@ -143,12 +143,48 @@ class TradingBot:
             
         print("\n" + "=" * 80 + "\n")
         
-    def get_status_report_dict(self):
-        """獲取結構化的狀態報告數據 (供 Discord Bot 使用)"""
-        
+    async def get_status_report_dict(self, fetch_realtime: bool = False):
+        """
+        獲取結構化的狀態報告數據 (供 Discord Bot 使用)
+
+        Args:
+            fetch_realtime: 是否從 API 獲取實時數據 (True) 或使用內存數據 (False)
+        """
+
         # 1. 帳戶概況
         account_data = {}
-        if self.risk_manager:
+
+        if fetch_realtime:
+            # 從 API 獲取實時數據
+            try:
+                account_info = await self.lighter_client.get_account_info()
+
+                # 計算盈虧
+                initial_balance = self.risk_manager.initial_balance if self.risk_manager else account_info.balance
+                total_pnl = account_info.total_asset_value - initial_balance
+                pnl_percent = (total_pnl / initial_balance * 100) if initial_balance > 0 else 0
+
+                # 獲取風險指標
+                metrics = self.risk_manager.get_metrics() if self.risk_manager else None
+
+                account_data = {
+                    "current_balance": account_info.balance,
+                    "initial_balance": initial_balance,
+                    "total_asset_value": account_info.total_asset_value,
+                    "available_balance": account_info.available_balance,
+                    "total_pnl": total_pnl,
+                    "pnl_percent": pnl_percent,
+                    "drawdown": metrics.current_drawdown*100 if metrics else 0,
+                    "win_rate": metrics.win_rate*100 if metrics else 0,
+                    "leverage": account_info.leverage
+                }
+            except Exception as e:
+                logger.error(f"獲取實時帳戶數據失敗: {e}")
+                # 降級到內存數據
+                fetch_realtime = False
+
+        if not fetch_realtime and self.risk_manager:
+            # 使用內存數據
             metrics = self.risk_manager.get_metrics()
             account_data = {
                 "current_balance": self.risk_manager.current_balance,
@@ -158,33 +194,71 @@ class TradingBot:
                 "drawdown": metrics.current_drawdown*100,
                 "win_rate": metrics.win_rate*100
             }
-            
+
         # 2. 持倉狀態
         positions_data = []
-        for symbol, position in self.positions.items():
-            if position and position.size != 0:
-                pnl_percent = (position.unrealized_pnl / (position.entry_price * abs(position.size))) * 100 if position.entry_price else 0
-                
-                pos_info = {
-                    "symbol": symbol,
-                    "side": position.side,
-                    "size": abs(position.size),
-                    "entry_price": position.entry_price,
-                    "pnl": position.unrealized_pnl,
-                    "pnl_percent": pnl_percent
-                }
-                
-                # 如果有相關信號信息
-                if self.signals.get(symbol):
-                    sig = self.signals[symbol]
-                    pos_info.update({
-                        "strategy": sig.strategy.value,
-                        "sl": sig.stop_loss,
-                        "tp": sig.take_profit
-                    })
-                
-                positions_data.append(pos_info)
-            
+
+        if fetch_realtime:
+            # 從 API 獲取實時持倉
+            try:
+                for symbol, market_id in self.market_configs:
+                    position = await self.lighter_client.get_position(market_id=market_id)
+                    if position and position.size != 0:
+                        side = "LONG" if position.size > 0 else "SHORT"
+                        pnl_percent = (position.unrealized_pnl / (position.entry_price * abs(position.size))) * 100 if position.entry_price else 0
+
+                        pos_info = {
+                            "symbol": symbol,
+                            "side": side,
+                            "size": abs(position.size),
+                            "entry_price": position.entry_price,
+                            "pnl": position.unrealized_pnl,
+                            "pnl_percent": pnl_percent,
+                            "liquidation_price": position.liquidation_price,
+                            "leverage": position.leverage
+                        }
+
+                        # 如果有相關信號信息
+                        if self.signals.get(symbol):
+                            sig = self.signals[symbol]
+                            pos_info.update({
+                                "strategy": sig.strategy.value,
+                                "sl": sig.stop_loss,
+                                "tp": sig.take_profit
+                            })
+
+                        positions_data.append(pos_info)
+            except Exception as e:
+                logger.error(f"獲取實時持倉數據失敗: {e}")
+                # 降級到內存數據
+                fetch_realtime = False
+
+        if not fetch_realtime:
+            # 使用內存數據
+            for symbol, position in self.positions.items():
+                if position and position.size != 0:
+                    pnl_percent = (position.unrealized_pnl / (position.entry_price * abs(position.size))) * 100 if position.entry_price else 0
+
+                    pos_info = {
+                        "symbol": symbol,
+                        "side": position.side,
+                        "size": abs(position.size),
+                        "entry_price": position.entry_price,
+                        "pnl": position.unrealized_pnl,
+                        "pnl_percent": pnl_percent
+                    }
+
+                    # 如果有相關信號信息
+                    if self.signals.get(symbol):
+                        sig = self.signals[symbol]
+                        pos_info.update({
+                            "strategy": sig.strategy.value,
+                            "sl": sig.stop_loss,
+                            "tp": sig.take_profit
+                        })
+
+                    positions_data.append(pos_info)
+
         # 3. 市場監控
         markets_data = []
         for symbol, market_id in self.market_configs:
@@ -193,15 +267,16 @@ class TradingBot:
                 status = f"已開倉 ({self.signals[symbol].strategy.value})"
             elif self.positions.get(symbol):
                  status = "持有倉位 (無信號)"
-            
+
             markets_data.append({
                 "symbol": symbol,
                 "id": market_id,
                 "status": status
             })
-            
+
         return {
-            "timestamp": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+            "timestamp": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC'),
+            "data_source": "實時 API" if fetch_realtime else "內存快取",
             "account": account_data,
             "positions": positions_data,
             "markets": markets_data
@@ -314,39 +389,101 @@ class TradingBot:
         
         logger.info(f"開始多市場交易循環，間隔: {interval_seconds} 秒")
         logger.info(f"並行交易市場: {len(self.market_configs)} 個")
-        
-        # 為每個市場創建交易任務
+
+        # 創建後台任務
         tasks = []
+
+        # 1. 帳戶同步任務
+        sync_interval = self.config.trading.account_sync_interval
+        logger.info(f"啟動帳戶同步任務，間隔: {sync_interval} 秒")
+        sync_task = asyncio.create_task(
+            self._account_sync_loop(sync_interval),
+            name="AccountSync"
+        )
+        tasks.append(sync_task)
+
+        # 2. 為每個市場創建交易任務
         for symbol, market_id in self.market_configs:
             task = asyncio.create_task(
                 self._market_trading_loop(symbol, market_id, interval_seconds),
                 name=f"Trading-{symbol}"
             )
             tasks.append(task)
-        
-        # 並行運行所有市場的交易循環
+
+        # 並行運行所有任務
         try:
             await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as e:
-            logger.error(f"多市場交易循環錯誤: {e}")
+            logger.error(f"交易系統錯誤: {e}")
         
         await self.shutdown()
     
     async def _market_trading_loop(self, symbol: str, market_id: int, interval_seconds: int):
         """單一市場的交易循環"""
         logger.info(f"[{symbol}] 開始交易循環")
-        
+
         while not self.should_stop:
             try:
                 await self._trading_cycle_for_market(symbol, market_id)
-                
+
                 # 等待下一個週期
                 await asyncio.sleep(interval_seconds)
-                
+
             except Exception as e:
                 logger.error(f"[{symbol}] 交易循環錯誤: {e}")
                 await asyncio.sleep(10)  # 錯誤後等待 10 秒
-    
+
+    async def _account_sync_loop(self, interval_seconds: int):
+        """
+        帳戶數據同步循環
+        定期從 API 獲取最新的帳戶數據並更新內存狀態
+        """
+        logger.info(f"帳戶同步循環已啟動")
+
+        while not self.should_stop:
+            try:
+                # 獲取實時帳戶數據
+                account_info = await lighter_client.get_account_info()
+
+                # 更新風險管理器的餘額
+                if self.risk_manager:
+                    old_balance = self.risk_manager.current_balance
+                    self.risk_manager.update_balance(account_info.balance)
+
+                    # 如果餘額有顯著變化，記錄日誌
+                    balance_change = account_info.balance - old_balance
+                    if abs(balance_change) > 0.01:  # 變化超過 0.01 USDC
+                        logger.debug(f"帳戶餘額更新: ${old_balance:.2f} -> ${account_info.balance:.2f} (Δ{balance_change:+.2f})")
+
+                # 更新績效追蹤器
+                metrics_tracker.update_equity(account_info.balance)
+
+                # 同步各市場的持倉數據
+                for symbol, market_id in self.market_configs:
+                    # 從 API 獲取實時持倉
+                    api_position = await lighter_client.get_position(market_id=market_id)
+
+                    # 更新內存中的持倉
+                    if api_position and api_position.size != 0:
+                        # 如果 API 有持倉但內存中沒有，說明可能錯過了某些事件
+                        if not self.positions.get(symbol) or self.positions[symbol].size == 0:
+                            logger.warning(f"[{symbol}] 檢測到 API 持倉但內存中無記錄，同步中...")
+
+                        self.positions[symbol] = api_position
+                    else:
+                        # API 無持倉，清空內存記錄
+                        if self.positions.get(symbol) and self.positions[symbol].size != 0:
+                            logger.warning(f"[{symbol}] API 無持倉但內存中有記錄，已清除")
+                            self.positions[symbol] = None
+
+                # 等待下一個同步週期
+                await asyncio.sleep(interval_seconds)
+
+            except Exception as e:
+                logger.error(f"帳戶同步錯誤: {e}")
+                # 錯誤後等待較短時間重試
+                await asyncio.sleep(min(10, interval_seconds))
+
     async def _trading_cycle_for_market(self, symbol: str, market_id: int):
         """單一市場的交易循環"""
         
