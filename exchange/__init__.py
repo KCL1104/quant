@@ -1,5 +1,6 @@
 from .lighter_client import (
     LighterClient,
+    LighterClientAdapter,
     lighter_client,
     OrderResult,
     Position,
@@ -13,6 +14,7 @@ from .data_fetcher import (
 
 __all__ = [
     "LighterClient",
+    "LighterClientAdapter",
     "lighter_client",
     "OrderResult",
     "Position",

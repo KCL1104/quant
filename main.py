@@ -48,11 +48,13 @@ class TradingBot:
         self.risk_manager: Optional[RiskManager] = None
         
         # 多市場配置 (symbol, market_id)
-        self.market_configs = [
-            ("BTC", 1),
-            ("SOL", 2),
-            ("ETH", 0)
-        ]
+        # 使用配置中的市場設置，而不是硬編碼
+        self.market_configs = self.config.trading.markets
+        if not self.market_configs:
+            # 回退到默認
+            self.market_configs = [
+                ("ETH", 0)
+            ]
         
         # 每個市場的狀態 (使用 symbol 作為 key)
         self.positions: dict[str, Optional[Position]] = {}
@@ -72,6 +74,136 @@ class TradingBot:
         # 設置信號處理
         signal.signal(signal.SIGINT, self._handle_shutdown)
         signal.signal(signal.SIGTERM, self._handle_shutdown)
+        # 使用 SIGUSR1 (在 Linux/Unix 上) 來觸發報告
+        if hasattr(signal, 'SIGUSR1'):
+            signal.signal(signal.SIGUSR1, self._handle_report_signal)
+    
+    def _handle_report_signal(self, signum, frame):
+        """處理報告請求信號"""
+        logger.info("收到報告請求信號，正在生成當前交易報告...")
+        # 由於這是信號處理程序，最好異步調用或安排任務
+        # 這裡我們簡單地打印到控制台
+        self._print_current_status_report()
+
+    def _print_current_status_report(self):
+        """打印當前狀態報告"""
+        print("\n" + "=" * 80)
+        print(f"                    實時交易狀態報告 ({datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC)")
+        print("=" * 80)
+        
+        # 1. 帳戶概況
+        print(f"\n【帳戶概況】")
+        if self.risk_manager:
+            metrics = self.risk_manager.get_metrics()
+            print(f"當前餘額:       ${self.risk_manager.current_balance:.2f}")
+            print(f"初始餘額:       ${self.risk_manager.initial_balance:.2f}")
+            print(f"總盈虧:         ${metrics.total_pnl:.2f} ({(metrics.total_pnl/self.risk_manager.initial_balance)*100:.2f}%)")
+            print(f"當前最大回撤:   {metrics.current_drawdown*100:.2f}%")
+            print(f"勝率:           {metrics.win_rate*100:.1f}%")
+        else:
+            print("風險管理器未初始化")
+            
+        # 2. 持倉狀態
+        print(f"\n【持倉狀態】")
+        has_positions = False
+        for symbol, position in self.positions.items():
+            if position and position.size != 0:
+                has_positions = True
+                pnl_percent = (position.unrealized_pnl / (position.entry_price * abs(position.size))) * 100 if position.entry_price else 0
+                print(f"  {symbol:<5} | 方向: {position.side:<5} | 數量: {position.size:.6f} | "
+                      f"入場: ${position.entry_price:.2f} | PnL: ${position.unrealized_pnl:.2f} ({pnl_percent:.2f}%)")
+                
+                # 如果有相關信號信息
+                if self.signals.get(symbol):
+                    sig = self.signals[symbol]
+                    print(f"        策略: {sig.strategy.value} | SL: ${sig.stop_loss:.2f} | TP: ${sig.take_profit:.2f}")
+        
+        if not has_positions:
+            print("  目前無持倉")
+            
+        # 3. 市場監控
+        print(f"\n【監控市場】")
+        for symbol, market_id in self.market_configs:
+            status = "監控中"
+            if self.signals.get(symbol):
+                status = f"已開倉 ({self.signals[symbol].strategy.value})"
+            elif self.positions.get(symbol):
+                 status = "持有倉位 (無信號)"
+            print(f"  {symbol:<5} (ID: {market_id:<2}) | 狀態: {status}")
+            
+        print("\n" + "=" * 80 + "\n")
+        
+    def get_status_report_dict(self):
+        """獲取結構化的狀態報告數據 (供 Discord Bot 使用)"""
+        
+        # 1. 帳戶概況
+        account_data = {}
+        if self.risk_manager:
+            metrics = self.risk_manager.get_metrics()
+            account_data = {
+                "current_balance": self.risk_manager.current_balance,
+                "initial_balance": self.risk_manager.initial_balance,
+                "total_pnl": metrics.total_pnl,
+                "pnl_percent": (metrics.total_pnl/self.risk_manager.initial_balance)*100,
+                "drawdown": metrics.current_drawdown*100,
+                "win_rate": metrics.win_rate*100
+            }
+            
+        # 2. 持倉狀態
+        positions_data = []
+        for symbol, position in self.positions.items():
+            if position and position.size != 0:
+                pnl_percent = (position.unrealized_pnl / (position.entry_price * abs(position.size))) * 100 if position.entry_price else 0
+                
+                pos_info = {
+                    "symbol": symbol,
+                    "side": position.side,
+                    "size": abs(position.size),
+                    "entry_price": position.entry_price,
+                    "pnl": position.unrealized_pnl,
+                    "pnl_percent": pnl_percent
+                }
+                
+                # 如果有相關信號信息
+                if self.signals.get(symbol):
+                    sig = self.signals[symbol]
+                    pos_info.update({
+                        "strategy": sig.strategy.value,
+                        "sl": sig.stop_loss,
+                        "tp": sig.take_profit
+                    })
+                
+                positions_data.append(pos_info)
+            
+        # 3. 市場監控
+        markets_data = []
+        for symbol, market_id in self.market_configs:
+            status = "監控中"
+            if self.signals.get(symbol):
+                status = f"已開倉 ({self.signals[symbol].strategy.value})"
+            elif self.positions.get(symbol):
+                 status = "持有倉位 (無信號)"
+            
+            markets_data.append({
+                "symbol": symbol,
+                "id": market_id,
+                "status": status
+            })
+            
+        return {
+            "timestamp": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+            "account": account_data,
+            "positions": positions_data,
+            "markets": markets_data
+        }
+        
+    async def _send_discord_notification(self, message: str):
+        """發送 Discord 通知"""
+        try:
+            from discord.bot import send_notification
+            await send_notification(message)
+        except Exception as e:
+            logger.error(f"發送 Discord 通知失敗: {e}")
     
     def _handle_shutdown(self, signum, frame):
         """處理關閉信號"""
@@ -123,6 +255,19 @@ class TradingBot:
     async def run(self):
         """運行主循環（多市場並行）"""
         await self.initialize()
+        
+        # 啟動 Discord Bot
+        discord_token = os.getenv("DISCORD_TOKEN")
+        if discord_token:
+            logger.info("啟動 Discord Bot...")
+            try:
+                from discord.bot import run_discord_bot
+                run_discord_bot(discord_token, self)
+                logger.info("Discord Bot 啟動成功")
+            except Exception as e:
+                logger.error(f"Discord Bot 啟動失敗: {e}")
+        else:
+            logger.warning("未設置 DISCORD_TOKEN，Discord Bot 未啟動")
         
         self.is_running = True
         
@@ -413,6 +558,18 @@ class TradingBot:
                 win_rate=metrics.win_rate,
                 drawdown=metrics.current_drawdown
             )
+            
+            # 發送 Discord 通知
+            msg = (
+                f"🟢 **開倉通知** - {symbol}\n"
+                f"方向: {signal.signal_type.value}\n"
+                f"策略: {signal.strategy.value}\n"
+                f"價格: ${signal.entry_price:.2f}\n"
+                f"數量: {position_size.base_amount:.6f}\n"
+                f"止損: ${signal.stop_loss:.2f} | 止盈: ${signal.take_profit:.2f}\n"
+                f"原因: {signal.reason}"
+            )
+            await self._send_discord_notification(msg)
         else:
             logger.error(f"[{symbol}] 開倉失敗: {result.message}")
     
@@ -501,6 +658,19 @@ class TradingBot:
                 drawdown=metrics.current_drawdown,
                 daily_pnl=f"{metrics.daily_pnl*100:.2f}%"
             )
+            
+            # 發送 Discord 通知
+            position = self.positions[symbol]
+            pnl_emoji = "🟢" if pnl >= 0 else "🔴"
+            pnl_percent = (pnl / (entry_price * abs(position.size))) * 100 if entry_price else 0
+            
+            msg = (
+                f"🔴 **平倉通知** - {symbol}\n"
+                f"原因: {reason}\n"
+                f"數量: {abs(position.size):.6f}\n"
+                f"盈虧: {pnl_emoji} ${pnl:.2f} ({pnl_percent:.2f}%)"
+            )
+            await self._send_discord_notification(msg)
             
             # 重置狀態
             self.signals[symbol] = None

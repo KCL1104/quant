@@ -1,12 +1,12 @@
 """
-Lighter DEX 客戶端封裝
-封裝 lighter-sdk 的交易功能
+Lighter DEX 客戶端適配器
+將已封裝好的 LighterClient 適配成量化交易機器人需要的接口
 """
-import asyncio
-from typing import Optional, Dict, Any
+import os
+import time
+from typing import Optional
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
 
 from config import settings, SignalType
 
@@ -32,6 +32,14 @@ class Position:
     realized_pnl: float           # 已實現盈虧
     leverage: float               # 槓桿
     liquidation_price: Optional[float]  # 強平價格
+    side: str = "LONG"            # 方向 (LONG/SHORT) - 默認為 LONG，初始化後會根據 size 更新
+
+    def __post_init__(self):
+        """初始化後處理"""
+        if self.size < 0:
+            self.side = "SHORT"
+        else:
+            self.side = "LONG"
 
 
 @dataclass
@@ -45,34 +53,20 @@ class AccountInfo:
     leverage: float               # 當前槓桿
 
 
-class LighterClient:
+class LighterClientAdapter:
     """
-    Lighter DEX 客戶端
+    Lighter DEX 客戶端適配器
     
-    封裝 lighter-sdk 提供的功能
+    封裝已有的 LighterClient，提供統一的接口給量化交易機器人使用
     """
-    
-    # Order types from lighter-sdk
-    ORDER_TYPE_LIMIT = 0
-    ORDER_TYPE_MARKET = 1
-    ORDER_TYPE_STOP_LOSS = 2
-    ORDER_TYPE_STOP_LOSS_LIMIT = 3
-    ORDER_TYPE_TAKE_PROFIT = 4
-    ORDER_TYPE_TAKE_PROFIT_LIMIT = 5
-    
-    # Time in force
-    TIF_IMMEDIATE_OR_CANCEL = 0
-    TIF_GOOD_TILL_TIME = 1
-    TIF_POST_ONLY = 2
     
     def __init__(self):
         self.config = settings.trading
-        self._signer_client = None
-        self._api_client = None
+        self._client = None
         self._initialized = False
         
         # Dry run 模式的模擬數據
-        self._dry_run_price: float = 50000.0  # 模擬價格
+        self._dry_run_price: float = 50000.0
         self._dry_run_position: Optional[Position] = None
         self._dry_run_balance: float = 1000.0
     
@@ -84,37 +78,38 @@ class LighterClient:
         """初始化客戶端"""
         if self._initialized:
             return
-
-        # Dry run 模式不需要初始化 SDK
+        
+        # Dry run 模式不需要初始化實際客戶端
         if settings.dry_run:
             self._initialized = True
             return
-
+        
         try:
-            from lighter import SignerClient, ApiClient, Configuration
-
-            # 初始化 API 客戶端 (用於查詢)
-            configuration = Configuration(host=self.config.host)
-            self._api_client = ApiClient(configuration=configuration)
-
-            # 初始化 Signer 客戶端 (用於交易)
-            if self.config.api_key and self.config.private_key:
-                # 從環境變量獲取索引值
-                import os
-                account_index = int(os.getenv("LIGHTER_ACCOUNT_INDEX", "0"))
-                api_key_index = int(os.getenv("LIGHTER_API_KEY_INDEX", "0"))
-
-                self._signer_client = SignerClient(
-                    rpc_endpoint=self.config.host,
-                    private_key=self.config.private_key,
-                    account_index=account_index,
-                    api_key_index=api_key_index
-                )
-
+            # 動態導入用戶的 LighterClient
+            from lighter_client import LighterClient
+            
+            # 從環境變數獲取配置
+            api_private_key = os.getenv("LIGHTER_API_KEY", self.config.api_key)
+            api_key_index = int(os.getenv("LIGHTER_API_KEY_INDEX", "0"))
+            account_index = os.getenv("LIGHTER_ACCOUNT_INDEX")
+            account_index = int(account_index) if account_index else None
+            base_url = os.getenv("LIGHTER_HOST", self.config.host)
+            
+            # 初始化實際的 LighterClient
+            self._client = LighterClient(
+                api_private_key=api_private_key,
+                api_key_index=api_key_index,
+                account_index=account_index,
+                base_url=base_url
+            )
+            
+            await self._client.initialize()
             self._initialized = True
-
+            
         except ImportError:
-            raise ImportError("請先安裝 lighter-sdk: pip install lighter-sdk")
+            raise ImportError(
+                "找不到 lighter_client 模組。請確保 lighter_client.py 在專案根目錄或 PYTHONPATH 中。"
+            )
         except Exception as e:
             raise ConnectionError(f"初始化 Lighter 客戶端失敗: {e}")
     
@@ -123,7 +118,6 @@ class LighterClient:
         await self.initialize()
         
         if settings.dry_run:
-            # 模擬模式返回假數據
             positions = []
             if self._dry_run_position and self._dry_run_position.size != 0:
                 # 計算未實現盈虧
@@ -153,31 +147,42 @@ class LighterClient:
             )
         
         try:
-            from lighter.api import AccountApi
+            # 使用實際客戶端獲取帳戶資訊
+            result = await self._client.get_account_balance()
             
-            account_api = AccountApi(self._api_client)
-            account = await account_api.account()
+            if not result.get("success"):
+                raise Exception(result.get("error", "獲取帳戶資訊失敗"))
             
-            # 解析持倉
+            balance_info = result.get("balance_info", {})
+            
+            # 獲取持倉列表
+            positions_result = await self._client.get_positions()
             positions = []
-            for pos in account.positions or []:
-                positions.append(Position(
-                    market_id=pos.market_id,
-                    size=float(pos.position or 0),
-                    entry_price=float(pos.avg_entry_price or 0),
-                    unrealized_pnl=float(pos.unrealized_pnl or 0),
-                    realized_pnl=float(pos.realized_pnl or 0),
-                    leverage=float(pos.leverage or 1),
-                    liquidation_price=float(pos.liquidation_price) if pos.liquidation_price else None
-                ))
+            
+            if positions_result.get("success"):
+                for pos in positions_result.get("positions", []):
+                    position_amount = pos.get("position_amount", 0)
+                    if abs(position_amount) > 1e-9:  # 只包含有效持倉
+                        positions.append(Position(
+                            market_id=pos.get("market_index", 0),
+                            size=position_amount,
+                            entry_price=pos.get("average_entry_price", 0),
+                            unrealized_pnl=pos.get("unrealized_pnl", 0),
+                            realized_pnl=pos.get("realized_pnl", 0),
+                            leverage=1.0,  # Lighter 使用帳戶級別槓桿
+                            liquidation_price=pos.get("liquidation_price")
+                        ))
+            
+            total_collateral = balance_info.get("total_collateral", 0)
+            available = balance_info.get("available_balance", total_collateral)
             
             return AccountInfo(
-                balance=float(account.collateral or 0),
-                available_balance=float(account.available_balance or 0),
-                collateral=float(account.collateral or 0),
-                total_asset_value=float(account.total_asset_value or 0),
+                balance=total_collateral,
+                available_balance=available,
+                collateral=total_collateral,
+                total_asset_value=total_collateral + sum(p.unrealized_pnl for p in positions),
                 positions=positions,
-                leverage=float(account.leverage or 1)
+                leverage=1.0
             )
             
         except Exception as e:
@@ -200,7 +205,8 @@ class LighterClient:
         self,
         signal_type: SignalType,
         amount: float,
-        reduce_only: bool = False
+        reduce_only: bool = False,
+        market_id: int = None
     ) -> OrderResult:
         """
         創建市價單
@@ -209,11 +215,15 @@ class LighterClient:
             signal_type: 訊號類型 (LONG/SHORT)
             amount: 基礎資產數量
             reduce_only: 是否僅減倉
+            market_id: 市場 ID（可選）
             
         Returns:
             OrderResult
         """
         await self.initialize()
+        
+        if market_id is None:
+            market_id = self.config.market_id
         
         is_ask = signal_type == SignalType.SHORT
         
@@ -231,7 +241,7 @@ class LighterClient:
             else:
                 # 開倉：創建新持倉
                 self._dry_run_position = Position(
-                    market_id=self.config.market_id,
+                    market_id=market_id,
                     size=amount if signal_type == SignalType.LONG else -amount,
                     entry_price=self._dry_run_price,
                     unrealized_pnl=0,
@@ -242,7 +252,7 @@ class LighterClient:
             
             return OrderResult(
                 success=True,
-                order_id="dry_run_" + str(datetime.utcnow().timestamp()),
+                order_id="dry_run_" + str(int(time.time() * 1000)),
                 filled_price=self._dry_run_price,
                 filled_amount=amount,
                 message="模擬交易成功",
@@ -250,22 +260,36 @@ class LighterClient:
             )
         
         try:
-            result = await self._signer_client.create_market_order(
-                market_index=self.config.market_id,
-                base_amount=int(amount * 1e8),  # 轉換為最小單位
+            # 使用實際客戶端創建市價單
+            client_order_index = int(time.time() * 1000) % 1000000
+            
+            result = await self._client.create_market_order(
+                market_index=market_id,
+                client_order_index=client_order_index,
+                base_amount=amount,
                 is_ask=is_ask,
                 reduce_only=reduce_only
             )
             
-            return OrderResult(
-                success=True,
-                order_id=str(result.get("order_id")),
-                filled_price=float(result.get("filled_price", 0)),
-                filled_amount=float(result.get("filled_amount", 0)),
-                message="訂單提交成功",
-                timestamp=datetime.utcnow()
-            )
-            
+            if result.get("success"):
+                return OrderResult(
+                    success=True,
+                    order_id=result.get("tx_hash"),
+                    filled_price=None,  # 市價單無法預知成交價
+                    filled_amount=amount,
+                    message="訂單提交成功",
+                    timestamp=datetime.utcnow()
+                )
+            else:
+                return OrderResult(
+                    success=False,
+                    order_id=None,
+                    filled_price=None,
+                    filled_amount=None,
+                    message=result.get("error", "訂單失敗"),
+                    timestamp=datetime.utcnow()
+                )
+                
         except Exception as e:
             return OrderResult(
                 success=False,
@@ -282,18 +306,21 @@ class LighterClient:
         amount: float,
         price: float,
         reduce_only: bool = False,
-        post_only: bool = False
+        post_only: bool = False,
+        market_id: int = None
     ) -> OrderResult:
         """創建限價單"""
         await self.initialize()
         
+        if market_id is None:
+            market_id = self.config.market_id
+        
         is_ask = signal_type == SignalType.SHORT
-        time_in_force = self.TIF_POST_ONLY if post_only else self.TIF_GOOD_TILL_TIME
         
         if settings.dry_run:
             return OrderResult(
                 success=True,
-                order_id="dry_run_" + str(datetime.utcnow().timestamp()),
+                order_id="dry_run_limit_" + str(int(time.time() * 1000)),
                 filled_price=price,
                 filled_amount=amount,
                 message="模擬限價單成功",
@@ -301,25 +328,43 @@ class LighterClient:
             )
         
         try:
-            result = await self._signer_client.create_order(
-                market_index=self.config.market_id,
-                base_amount=int(amount * 1e8),
-                price=int(price * 1e8),
+            client_order_index = int(time.time() * 1000) % 1000000
+            
+            # 設置 time_in_force
+            if post_only:
+                time_in_force = self._client.TIME_IN_FORCE_POST_ONLY
+            else:
+                time_in_force = self._client.TIME_IN_FORCE_GTT
+            
+            result = await self._client.create_limit_order(
+                market_index=market_id,
+                client_order_index=client_order_index,
+                base_amount=amount,
+                price=price,
                 is_ask=is_ask,
-                order_type=self.ORDER_TYPE_LIMIT,
-                time_in_force=time_in_force,
-                reduce_only=reduce_only
+                reduce_only=reduce_only,
+                time_in_force=time_in_force
             )
             
-            return OrderResult(
-                success=True,
-                order_id=str(result.get("order_id")),
-                filled_price=price,
-                filled_amount=amount,
-                message="限價單提交成功",
-                timestamp=datetime.utcnow()
-            )
-            
+            if result.get("success"):
+                return OrderResult(
+                    success=True,
+                    order_id=result.get("tx_hash"),
+                    filled_price=price,
+                    filled_amount=amount,
+                    message="限價單提交成功",
+                    timestamp=datetime.utcnow()
+                )
+            else:
+                return OrderResult(
+                    success=False,
+                    order_id=None,
+                    filled_price=None,
+                    filled_amount=None,
+                    message=result.get("error", "限價單失敗"),
+                    timestamp=datetime.utcnow()
+                )
+                
         except Exception as e:
             return OrderResult(
                 success=False,
@@ -335,10 +380,14 @@ class LighterClient:
         signal_type: SignalType,
         amount: float,
         trigger_price: float,
-        reduce_only: bool = True
+        reduce_only: bool = True,
+        market_id: int = None
     ) -> OrderResult:
         """創建止損單"""
         await self.initialize()
+        
+        if market_id is None:
+            market_id = self.config.market_id
         
         # 止損單方向與持倉相反
         is_ask = signal_type == SignalType.LONG  # 做多的止損是賣出
@@ -346,7 +395,7 @@ class LighterClient:
         if settings.dry_run:
             return OrderResult(
                 success=True,
-                order_id="dry_run_sl_" + str(datetime.utcnow().timestamp()),
+                order_id="dry_run_sl_" + str(int(time.time() * 1000)),
                 filled_price=trigger_price,
                 filled_amount=amount,
                 message="模擬止損單成功",
@@ -354,23 +403,48 @@ class LighterClient:
             )
         
         try:
-            result = await self._signer_client.create_sl_order(
-                market_index=self.config.market_id,
-                base_amount=int(amount * 1e8),
-                trigger_price=int(trigger_price * 1e8),
-                is_ask=is_ask,
-                reduce_only=reduce_only
-            )
+            client_order_index = int(time.time() * 1000) % 1000000
             
-            return OrderResult(
-                success=True,
-                order_id=str(result.get("order_id")),
-                filled_price=None,
-                filled_amount=amount,
-                message="止損單提交成功",
-                timestamp=datetime.utcnow()
-            )
+            # 使用 WebSocket 方式創建止損單（如果可用）
+            if hasattr(self._client, 'ws_create_stop_loss_order'):
+                result = await self._client.ws_create_stop_loss_order(
+                    market_index=market_id,
+                    client_order_index=client_order_index,
+                    base_amount=amount,
+                    trigger_price=trigger_price,
+                    is_ask=is_ask,
+                    reduce_only=reduce_only
+                )
+            else:
+                # 回退到普通限價單（以止損價格）
+                result = await self._client.create_limit_order(
+                    market_index=market_id,
+                    client_order_index=client_order_index,
+                    base_amount=amount,
+                    price=trigger_price,
+                    is_ask=is_ask,
+                    reduce_only=reduce_only
+                )
             
+            if result.get("success"):
+                return OrderResult(
+                    success=True,
+                    order_id=result.get("tx_hash"),
+                    filled_price=None,
+                    filled_amount=amount,
+                    message="止損單提交成功",
+                    timestamp=datetime.utcnow()
+                )
+            else:
+                return OrderResult(
+                    success=False,
+                    order_id=None,
+                    filled_price=None,
+                    filled_amount=None,
+                    message=result.get("error", "止損單失敗"),
+                    timestamp=datetime.utcnow()
+                )
+                
         except Exception as e:
             return OrderResult(
                 success=False,
@@ -386,10 +460,14 @@ class LighterClient:
         signal_type: SignalType,
         amount: float,
         trigger_price: float,
-        reduce_only: bool = True
+        reduce_only: bool = True,
+        market_id: int = None
     ) -> OrderResult:
         """創建止盈單"""
         await self.initialize()
+        
+        if market_id is None:
+            market_id = self.config.market_id
         
         # 止盈單方向與持倉相反
         is_ask = signal_type == SignalType.LONG  # 做多的止盈是賣出
@@ -397,7 +475,7 @@ class LighterClient:
         if settings.dry_run:
             return OrderResult(
                 success=True,
-                order_id="dry_run_tp_" + str(datetime.utcnow().timestamp()),
+                order_id="dry_run_tp_" + str(int(time.time() * 1000)),
                 filled_price=trigger_price,
                 filled_amount=amount,
                 message="模擬止盈單成功",
@@ -405,23 +483,48 @@ class LighterClient:
             )
         
         try:
-            result = await self._signer_client.create_tp_order(
-                market_index=self.config.market_id,
-                base_amount=int(amount * 1e8),
-                trigger_price=int(trigger_price * 1e8),
-                is_ask=is_ask,
-                reduce_only=reduce_only
-            )
+            client_order_index = int(time.time() * 1000) % 1000000
             
-            return OrderResult(
-                success=True,
-                order_id=str(result.get("order_id")),
-                filled_price=None,
-                filled_amount=amount,
-                message="止盈單提交成功",
-                timestamp=datetime.utcnow()
-            )
+            # 使用 WebSocket 方式創建止盈單（如果可用）
+            if hasattr(self._client, 'ws_create_take_profit_order'):
+                result = await self._client.ws_create_take_profit_order(
+                    market_index=market_id,
+                    client_order_index=client_order_index,
+                    base_amount=amount,
+                    trigger_price=trigger_price,
+                    is_ask=is_ask,
+                    reduce_only=reduce_only
+                )
+            else:
+                # 回退到普通限價單（以止盈價格）
+                result = await self._client.create_limit_order(
+                    market_index=market_id,
+                    client_order_index=client_order_index,
+                    base_amount=amount,
+                    price=trigger_price,
+                    is_ask=is_ask,
+                    reduce_only=reduce_only
+                )
             
+            if result.get("success"):
+                return OrderResult(
+                    success=True,
+                    order_id=result.get("tx_hash"),
+                    filled_price=None,
+                    filled_amount=amount,
+                    message="止盈單提交成功",
+                    timestamp=datetime.utcnow()
+                )
+            else:
+                return OrderResult(
+                    success=False,
+                    order_id=None,
+                    filled_price=None,
+                    filled_amount=None,
+                    message=result.get("error", "止盈單失敗"),
+                    timestamp=datetime.utcnow()
+                )
+                
         except Exception as e:
             return OrderResult(
                 success=False,
@@ -432,7 +535,7 @@ class LighterClient:
                 timestamp=datetime.utcnow()
             )
     
-    async def cancel_order(self, order_id: str) -> bool:
+    async def cancel_order(self, order_id: str, market_id: int = None) -> bool:
         """取消訂單"""
         await self.initialize()
         
@@ -440,31 +543,31 @@ class LighterClient:
             return True
         
         try:
-            await self._signer_client.cancel_order(
-                market_index=self.config.market_id,
-                order_id=int(order_id)
+            if market_id is None:
+                market_id = self.config.market_id
+            
+            result = await self._client.cancel_order_by_market_index(
+                market_index=market_id,
+                order_index=int(order_id)
             )
-            return True
-        except Exception as e:
+            return result.get("success", False)
+        except Exception:
             return False
     
     async def cancel_all_orders(self, market_id: int = None) -> bool:
         """取消所有訂單"""
-        if market_id is None:
-            market_id = self.config.market_id
+        await self.initialize()
         
         if settings.dry_run:
             return True
         
         try:
-            # Lighter SDK 可能沒有直接的 cancel_all 方法
-            # 需要先取得所有訂單再逐一取消
-            # 這裡簡化處理
-            return True
-        except Exception as e:
+            result = await self._client.cancel_all_orders()
+            return result.get("success", False)
+        except Exception:
             return False
     
-    async def update_leverage(self, leverage: float) -> bool:
+    async def update_leverage(self, leverage: float, market_id: int = None) -> bool:
         """更新槓桿"""
         await self.initialize()
         
@@ -472,13 +575,16 @@ class LighterClient:
             return True
         
         try:
-            await self._signer_client.update_leverage(
-                market_index=self.config.market_id,
-                margin_mode=0,  # Cross margin
-                leverage=leverage
-            )
+            # Lighter 的槓桿是帳戶級別的，不是市場級別的
+            # 如果實際客戶端有 update_leverage 方法，則調用它
+            if hasattr(self._client, 'update_leverage'):
+                result = await self._client.update_leverage(
+                    market_index=market_id or self.config.market_id,
+                    leverage=leverage
+                )
+                return result.get("success", True)
             return True
-        except Exception as e:
+        except Exception:
             return False
     
     async def close_position(self, market_id: int = None) -> OrderResult:
@@ -505,15 +611,50 @@ class LighterClient:
         return await self.create_market_order(
             signal_type=signal_type,
             amount=amount,
-            reduce_only=True
+            reduce_only=True,
+            market_id=market_id
         )
+    
+    async def close_all_positions(self) -> dict:
+        """平倉所有持倉"""
+        await self.initialize()
+        
+        if settings.dry_run:
+            if self._dry_run_position:
+                self._dry_run_balance += self._dry_run_position.unrealized_pnl
+                self._dry_run_position = None
+            return {"success": True, "message": "模擬平倉成功"}
+        
+        try:
+            if hasattr(self._client, 'ws_close_all_positions'):
+                return await self._client.ws_close_all_positions()
+            else:
+                # 手動平倉每個持倉
+                account = await self.get_account_info()
+                results = []
+                for pos in account.positions:
+                    if abs(pos.size) > 1e-9:
+                        result = await self.close_position(pos.market_id)
+                        results.append(result)
+                
+                return {
+                    "success": all(r.success for r in results),
+                    "results": results
+                }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
     
     async def close(self):
         """關閉客戶端"""
-        if self._api_client:
-            # 關閉連接
-            pass
+        if self._client:
+            await self._client.close()
         self._initialized = False
+
+
+# 創建兼容的類別名稱
+class LighterClient(LighterClientAdapter):
+    """LighterClient 的別名，保持向後兼容"""
+    pass
 
 
 # 全域客戶端實例

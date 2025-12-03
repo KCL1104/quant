@@ -146,12 +146,12 @@ class TradingConfig(BaseSettings):
     host: str = Field(default="https://api.lighter.xyz", env="LIGHTER_HOST")
     
     # 交易對列表 (格式: "SYMBOL:ID,SYMBOL:ID")
-    # 例如: "BTC-USD:0,ETH-USD:1"
-    markets_str: str = Field(default="WETH-USDC:2", env="MARKETS")
+    # 例如: "BTC:1,ETH:0,SOL:2"
+    markets_str: str = Field(default="ETH:0", env="MARKETS")
     
     # 兼容舊配置 (單一市場)
     market_id: int = 0                    
-    market_symbol: str = "BTC-USD"        
+    market_symbol: str = "ETH"        
     
     @property
     def markets(self) -> list[tuple[str, int]]:
@@ -167,7 +167,12 @@ class TradingConfig(BaseSettings):
                     result.append((symbol.strip(), int(id_str)))
                 else:
                     # 假設只有 symbol，ID 需要另外查找或為預設
-                    result.append((m.strip(), 0))
+                    # 這裡可以擴展查找邏輯，暫時默認為 0
+                    symbol = m.strip()
+                    if symbol == "ETH": result.append(("ETH", 0))
+                    elif symbol == "BTC": result.append(("BTC", 1))
+                    elif symbol == "SOL": result.append(("SOL", 2))
+                    else: result.append((symbol, 0))
             return result
         except Exception:
             return [(self.market_symbol, self.market_id)]
