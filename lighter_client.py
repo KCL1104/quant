@@ -2336,6 +2336,142 @@ class LighterClient:
         except Exception as e:
             return self._handle_api_error("WS 創建市價訂單", e)
     
+    async def ws_create_stop_loss_order(self,
+                                      market_index: int,
+                                      client_order_index: int,
+                                      base_amount: float,
+                                      trigger_price: float,
+                                      is_ask: bool,
+                                      reduce_only: bool = True) -> Dict:
+        """
+        通過 WebSocket 創建止損訂單 (Stop Market)
+        """
+        try:
+            self._ensure_initialized()
+            logger.info(f"WS 創建止損訂單 - 市場: {market_index}, 數量: {base_amount}, 觸發價: {trigger_price}, 方向: {'賣' if is_ask else '買'}")
+            
+            base_amount_formatted = self._format_amount(base_amount, market_index)
+            trigger_price_formatted = self._format_price(trigger_price)
+            
+            # 止損單 (Stop Market) 價格設為 0
+            price_formatted = 0
+            
+            # 獲取下一個 nonce
+            next_nonce_response = await self.transaction_api.next_nonce(
+                account_index=self.account_index, 
+                api_key_index=self.api_key_index
+            )
+            nonce_value = next_nonce_response.nonce
+            
+            # 簽署訂單
+            tx_info, error = self.signer_client.sign_create_order(
+                market_index=market_index,
+                client_order_index=client_order_index,
+                base_amount=base_amount_formatted,
+                price=price_formatted,
+                is_ask=is_ask,
+                order_type=self.ORDER_TYPE_STOP_LOSS,
+                time_in_force=self.TIME_IN_FORCE_GTT,
+                reduce_only=int(reduce_only),
+                trigger_price=trigger_price_formatted,
+                order_expiry=int(time.time() * 1000) + 30 * 24 * 3600 * 1000, # 30 days
+                nonce=nonce_value
+            )
+            
+            if error is not None:
+                return self._handle_api_error("WS 創建止損訂單 - 簽署", Exception(f"簽署訂單失敗: {error}"))
+            
+            # 通過 WebSocket 發送交易
+            result = await self._ws_send_transaction(
+                tx_type=SignerClient.TX_TYPE_CREATE_ORDER,
+                tx_info=tx_info,
+                operation_name="WS 創建止損訂單"
+            )
+            
+            if result.get("success"):
+                result["order_info"] = {
+                    "market_index": market_index,
+                    "client_order_index": client_order_index,
+                    "base_amount": base_amount,
+                    "trigger_price": trigger_price,
+                    "is_ask": is_ask,
+                    "order_type": "stop_loss",
+                    "reduce_only": reduce_only
+                }
+            
+            return result
+            
+        except Exception as e:
+            return self._handle_api_error("WS 創建止損訂單", e)
+
+    async def ws_create_take_profit_order(self,
+                                        market_index: int,
+                                        client_order_index: int,
+                                        base_amount: float,
+                                        trigger_price: float,
+                                        is_ask: bool,
+                                        reduce_only: bool = True) -> Dict:
+        """
+        通過 WebSocket 創建止盈訂單 (Take Profit Market)
+        """
+        try:
+            self._ensure_initialized()
+            logger.info(f"WS 創建止盈訂單 - 市場: {market_index}, 數量: {base_amount}, 觸發價: {trigger_price}, 方向: {'賣' if is_ask else '買'}")
+            
+            base_amount_formatted = self._format_amount(base_amount, market_index)
+            trigger_price_formatted = self._format_price(trigger_price)
+            
+            # 止盈單 (Take Profit Market) 價格設為 0
+            price_formatted = 0
+            
+            # 獲取下一個 nonce
+            next_nonce_response = await self.transaction_api.next_nonce(
+                account_index=self.account_index, 
+                api_key_index=self.api_key_index
+            )
+            nonce_value = next_nonce_response.nonce
+            
+            # 簽署訂單
+            tx_info, error = self.signer_client.sign_create_order(
+                market_index=market_index,
+                client_order_index=client_order_index,
+                base_amount=base_amount_formatted,
+                price=price_formatted,
+                is_ask=is_ask,
+                order_type=self.ORDER_TYPE_TAKE_PROFIT,
+                time_in_force=self.TIME_IN_FORCE_GTT,
+                reduce_only=int(reduce_only),
+                trigger_price=trigger_price_formatted,
+                order_expiry=int(time.time() * 1000) + 30 * 24 * 3600 * 1000, # 30 days
+                nonce=nonce_value
+            )
+            
+            if error is not None:
+                return self._handle_api_error("WS 創建止盈訂單 - 簽署", Exception(f"簽署訂單失敗: {error}"))
+            
+            # 通過 WebSocket 發送交易
+            result = await self._ws_send_transaction(
+                tx_type=SignerClient.TX_TYPE_CREATE_ORDER,
+                tx_info=tx_info,
+                operation_name="WS 創建止盈訂單"
+            )
+            
+            if result.get("success"):
+                result["order_info"] = {
+                    "market_index": market_index,
+                    "client_order_index": client_order_index,
+                    "base_amount": base_amount,
+                    "trigger_price": trigger_price,
+                    "is_ask": is_ask,
+                    "order_type": "take_profit",
+                    "reduce_only": reduce_only
+                }
+            
+            return result
+            
+        except Exception as e:
+            return self._handle_api_error("WS 創建止盈訂單", e)
+
     async def ws_create_limit_order(self,
                                   market_index: int,
                                   client_order_index: int,

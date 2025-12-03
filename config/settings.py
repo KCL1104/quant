@@ -2,7 +2,7 @@
 策略配置設定
 所有參數集中管理，方便調整優化
 """
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 from typing import Optional
 from enum import Enum
@@ -140,10 +140,12 @@ class MeanReversionConfig(BaseSettings):
 
 class TradingConfig(BaseSettings):
     """交易配置"""
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding='utf-8', extra='ignore')
+
     # Lighter 設定
-    api_key: str = Field(default="", env="LIGHTER_API_KEY")
-    private_key: str = Field(default="", env="LIGHTER_PRIVATE_KEY")
-    host: str = Field(default="https://api.lighter.xyz", env="LIGHTER_HOST")
+    api_key: str = Field(default="", validation_alias="LIGHTER_API_KEY")
+    private_key: str = Field(default="", validation_alias="LIGHTER_PRIVATE_KEY")
+    host: str = Field(default="https://mainnet.zklighter.elliot.ai", validation_alias="LIGHTER_HOST")
     
     # 交易對列表 (格式: "SYMBOL:ID,SYMBOL:ID")
     # 例如: "BTC:1,ETH:0,SOL:2"
@@ -212,6 +214,7 @@ class Settings(BaseSettings):
     dry_run: bool = Field(default=True, env="DRY_RUN")  # 模擬交易模式
     
     class Config:
+        # Pydantic V1 style config, kept for compatibility if needed, but V2 uses model_config
         env_file = ".env"
         env_file_encoding = "utf-8"
         extra = "ignore"
