@@ -134,7 +134,7 @@ class LighterClient:
             # 初始化核心 SignerClient（包含所有交易功能）
             self.signer_client = SignerClient(
                 url=self.base_url,
-                api_private_key=self.api_private_key,
+                private_key=self.api_private_key,
                 api_key_index=self.api_key_index,
                 account_index=self.account_index,
                 max_api_key_index=self.max_api_key_index,
