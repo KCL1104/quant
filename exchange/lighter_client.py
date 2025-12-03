@@ -89,11 +89,10 @@ class LighterClientAdapter:
             from lighter_client import LighterClient
             
             # 從環境變數獲取配置
-            api_private_key = os.getenv("LIGHTER_API_KEY", self.config.api_key)
-            api_key_index = int(os.getenv("LIGHTER_API_KEY_INDEX", "0"))
-            account_index = os.getenv("LIGHTER_ACCOUNT_INDEX")
-            account_index = int(account_index) if account_index else None
-            base_url = os.getenv("LIGHTER_HOST", self.config.host)
+            api_private_key = os.getenv("LIGHTER_PRIVATE_KEY")
+            api_key_index = int(os.getenv("LIGHTER_API_KEY_INDEX"))
+            account_index = int(os.getenv("LIGHTER_ACCOUNT_INDEX"))
+            base_url = os.getenv("LIGHTER_HOST")
             
             # 初始化實際的 LighterClient
             self._client = LighterClient(

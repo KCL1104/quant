@@ -693,7 +693,7 @@ def main():
             try:
                 print(f"\n載入數據: {symbol} (ID: {market_id})...")
                 df_fast, df_slow = generate_sample_data(
-                    days=200, market_id=market_id, target_count=30000
+                    days=300, market_id=market_id, target_count=100000
                 )
                 backtester.add_data(symbol, df_fast, df_slow)
             except Exception as e:

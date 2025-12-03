@@ -7,6 +7,11 @@ import signal
 from datetime import datetime, timedelta
 from typing import Optional
 import uuid
+import os
+from dotenv import load_dotenv
+
+# 載入環境變數
+load_dotenv()
 
 from config import settings, MarketRegime, SignalType, StrategyType
 from core import (
@@ -18,10 +23,14 @@ from core import (
     MarketState,
 )
 from strategies import (
-    momentum_strategy,
-    mean_reversion_strategy,
+    momentum_v2,
+    mean_reversion_v2,
     Signal,
 )
+
+# 定義策略實例
+momentum_strategy = momentum_v2.momentum_strategy_v2
+mean_reversion_strategy = mean_reversion_v2.mean_reversion_strategy_v2
 from exchange import (
     lighter_client,
     data_fetcher,
@@ -259,11 +268,39 @@ class TradingBot:
         # 啟動 Discord Bot
         discord_token = os.getenv("DISCORD_TOKEN")
         if discord_token:
-            logger.info("啟動 Discord Bot...")
             try:
-                from discord.bot import run_discord_bot
+                # 設置 discord logger 級別為 WARNING，隱藏不必要的日誌
+                import logging
+                logging.getLogger("discord").setLevel(logging.WARNING)
+                logging.getLogger("discord.http").setLevel(logging.WARNING)
+                logging.getLogger("discord.gateway").setLevel(logging.WARNING)
+                logging.getLogger("discord.client").setLevel(logging.WARNING)
+                logging.getLogger("discord.webhook").setLevel(logging.WARNING)
+                
+                from discord.bot import run_discord_bot, send_notification
                 run_discord_bot(discord_token, self)
-                logger.info("Discord Bot 啟動成功")
+                logger.info("Discord Bot 已啟動")
+                
+                # 發送啟動通知
+                start_msg = (
+                    f"🚀 **Lighter Quant Bot 已啟動**\n"
+                    f"時間: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+                    f"模式: {'模擬交易 (Dry Run)' if self.config.dry_run else '實盤交易'}\n"
+                    f"交易市場: {', '.join([s for s, _ in self.market_configs])}\n"
+                    f"帳戶餘額: ${self.risk_manager.initial_balance:.2f}"
+                )
+                # 等待一小段時間讓 Discord Bot 連接成功
+                # 使用 create_task 來發送通知，避免阻塞主線程
+                async def send_start_notification():
+                    await asyncio.sleep(5)
+                    try:
+                        await send_notification(start_msg)
+                        logger.info("Discord 啟動通知已發送")
+                    except Exception as e:
+                        logger.error(f"發送 Discord 啟動通知失敗: {e}")
+                
+                asyncio.create_task(send_start_notification())
+                
             except Exception as e:
                 logger.error(f"Discord Bot 啟動失敗: {e}")
         else:

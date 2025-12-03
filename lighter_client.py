@@ -545,15 +545,12 @@ class LighterClient:
                         if response.status == 200:
                             logger.info(f"找到有效的帳戶索引: {account_idx}")
                             return account_idx
-                        elif response.status == 400:
-                            error_data = await response.json()
-                            if "invalid account index" not in error_data.get("message", ""):
-                                # 如果不是 account index 問題，可能是其他問題
-                                logger.warning(f"帳戶索引 {account_idx} 返回錯誤: {error_data}")
-                                continue
+                        # 忽略錯誤日誌，除非是預期之外的錯誤
+                        elif response.status != 400:
+                            pass
                                 
                 except Exception as e:
-                    logger.debug(f"檢測帳戶索引 {account_idx} 時出錯: {e}")
+                    # 忽略連接錯誤
                     continue
         
         # 如果都沒找到，拋出異常
