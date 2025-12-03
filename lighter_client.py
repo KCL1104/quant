@@ -132,15 +132,13 @@ class LighterClient:
                 logger.info(f"自動檢測到帳戶索引: {self.account_index}")
             
             # 初始化核心 SignerClient（包含所有交易功能）
-            self.signer_client = SignerClient(
-                url=self.base_url,
-                private_key=self.api_private_key,
-                api_key_index=self.api_key_index,
-                account_index=self.account_index,
-                max_api_key_index=self.max_api_key_index,
-                private_keys=self.private_keys
+            self.signer_client = SignerClient(  
+                url="https://mainnet.zklighter.elliot.ai",           # positional url  
+                private_key=self.api_private_key,    # positional private_key  
+                api_key_index=self.api_key_index,  
+                account_index=self.account_index,  
             )
-            
+                        
             # 初始化 API 客戶端（用於查詢功能）
             api_client = ApiClient(configuration=self.configuration)
             self.account_api = AccountApi(api_client=api_client)

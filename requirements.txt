@@ -1,5 +1,5 @@
 # Lighter SDK
-lighter-sdk>=0.1.4
+lighter-sdk==0.1.4
 
 # Technical Analysis
 TA-Lib>=0.4.28
@@ -20,3 +20,4 @@ loguru>=0.7.0
 
 # Date/Time
 python-dateutil>=2.8.2
+discord.py>=2.3.2
