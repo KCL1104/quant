@@ -62,7 +62,8 @@ class TradingBot:
         if not self.market_configs:
             # 回退到默認
             self.market_configs = [
-                ("ETH", 0)
+                ("ETH", 0),
+                ("BNB", 25)
             ]
         
         # 每個市場的狀態 (使用 symbol 作為 key)

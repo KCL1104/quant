@@ -147,7 +147,8 @@ class TradingConfig(BaseSettings):
     
     # 交易對列表 (格式: "SYMBOL:ID,SYMBOL:ID")
     # 例如: "BTC:1,ETH:0,SOL:2"
-    markets_str: str = Field(default="ETH:0", env="MARKETS")
+    # 注意：這裡使用 MARKETS 作為環境變數名稱，對應 markets_str 字段
+    markets_str: str = Field(default="ETH:0,BNB:25", validation_alias="MARKETS")
     
     # 兼容舊配置 (單一市場)
     market_id: int = 0                    
@@ -158,7 +159,7 @@ class TradingConfig(BaseSettings):
         """解析市場配置"""
         try:
             if not self.markets_str:
-                return [(self.market_symbol, self.market_id)]
+                return [("ETH", 0), ("BNB", 25)]
                 
             result = []
             for m in self.markets_str.split(','):
@@ -172,10 +173,11 @@ class TradingConfig(BaseSettings):
                     if symbol == "ETH": result.append(("ETH", 0))
                     elif symbol == "BTC": result.append(("BTC", 1))
                     elif symbol == "SOL": result.append(("SOL", 2))
+                    elif symbol == "BNB": result.append(("BNB", 25))
                     else: result.append((symbol, 0))
             return result
         except Exception:
-            return [(self.market_symbol, self.market_id)]
+            return [("ETH", 0), ("BNB", 25)]
     
     # 最小交易金額
     min_trade_amount: float = 10.0        # 最小交易金額 USD
