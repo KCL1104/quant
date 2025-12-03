@@ -556,14 +556,29 @@ class LighterClientAdapter:
     async def cancel_all_orders(self, market_id: int = None) -> bool:
         """取消所有訂單"""
         await self.initialize()
-        
+
         if settings.dry_run:
             return True
-        
+
         try:
-            result = await self._client.cancel_all_orders()
+            # 如果指定了 market_id，只取消該市場的訂單
+            if market_id is not None:
+                if hasattr(self._client, 'cancel_orders_by_market'):
+                    result = await self._client.cancel_orders_by_market(market_id)
+                elif hasattr(self._client, 'cancel_all_orders_for_market'):
+                    result = await self._client.cancel_all_orders_for_market(market_id)
+                else:
+                    # 如果 SDK 不支持按市場取消，獲取該市場的所有訂單並逐一取消
+                    from utils import bot_logger as logger
+                    logger.warning(f"SDK 不支持按市場取消訂單，將取消所有市場的訂單")
+                    result = await self._client.cancel_all_orders()
+            else:
+                # 沒有指定 market_id，取消所有訂單
+                result = await self._client.cancel_all_orders()
             return result.get("success", False)
-        except Exception:
+        except Exception as e:
+            from utils import bot_logger as logger
+            logger.error(f"取消訂單失敗: {e}")
             return False
     
     async def update_leverage(self, leverage: float, market_id: int = None) -> bool:

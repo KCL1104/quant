@@ -554,8 +554,8 @@ class TradingBot:
             return
         
         # 更新槓桿
-        await lighter_client.update_leverage(leverage)
-        
+        await lighter_client.update_leverage(leverage, market_id=market_id)
+
         logger.info(
             f"[{symbol}] 開倉: {signal.signal_type.value} | "
             f"價格={signal.entry_price:.2f} | "
@@ -564,11 +564,12 @@ class TradingBot:
             f"止損={signal.stop_loss:.2f} | "
             f"止盈={signal.take_profit:.2f}"
         )
-        
+
         # 執行市價單
         result = await lighter_client.create_market_order(
             signal_type=signal.signal_type,
-            amount=position_size.base_amount
+            amount=position_size.base_amount,
+            market_id=market_id
         )
         
         if result.success:
@@ -576,7 +577,7 @@ class TradingBot:
             self.entry_times[symbol] = datetime.utcnow()
             
             # 設置止損止盈單
-            await self._set_sl_tp_orders_for_market(symbol, signal, position_size.base_amount)
+            await self._set_sl_tp_orders_for_market(symbol, market_id, signal, position_size.base_amount)
             
             log_trade(
                 action="OPEN",
@@ -611,28 +612,30 @@ class TradingBot:
         else:
             logger.error(f"[{symbol}] 開倉失敗: {result.message}")
     
-    async def _set_sl_tp_orders_for_market(self, symbol: str, signal: Signal, amount: float):
+    async def _set_sl_tp_orders_for_market(self, symbol: str, market_id: int, signal: Signal, amount: float):
         """為指定市場設置止損止盈單"""
-        
+
         # 止損單
         sl_result = await lighter_client.create_stop_loss_order(
             signal_type=signal.signal_type,
             amount=amount,
-            trigger_price=signal.stop_loss
+            trigger_price=signal.stop_loss,
+            market_id=market_id
         )
-        
+
         if sl_result.success:
             logger.debug(f"[{symbol}] 止損單設置成功: {signal.stop_loss:.2f}")
         else:
             logger.warning(f"[{symbol}] 止損單設置失敗: {sl_result.message}")
-        
+
         # 止盈單
         tp_result = await lighter_client.create_take_profit_order(
             signal_type=signal.signal_type,
             amount=amount,
-            trigger_price=signal.take_profit
+            trigger_price=signal.take_profit,
+            market_id=market_id
         )
-        
+
         if tp_result.success:
             logger.debug(f"[{symbol}] 止盈單設置成功: {signal.take_profit:.2f}")
         else:

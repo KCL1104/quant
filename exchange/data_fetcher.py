@@ -78,7 +78,7 @@ class DataFetcher:
 
         try:
             # 直接通过HTTP API预加载更多数据
-            import requests
+            import aiohttp
             import time
             from datetime import datetime, timedelta
 
@@ -100,9 +100,11 @@ class DataFetcher:
                 f"end_timestamp={end_timestamp}&count_back={min_candles}&set_timestamp_to_end=true"
             )
 
-            response = requests.get(url, headers=headers)
-            response.raise_for_status()
-            data = response.json()
+            # 使用异步方式获取数据
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as response:
+                    response.raise_for_status()
+                    data = await response.json()
 
             candlesticks = data.get('candlesticks', [])
 
