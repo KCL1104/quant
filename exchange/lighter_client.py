@@ -6,7 +6,7 @@ import os
 import time
 from typing import Optional
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from config import settings, SignalType
 
@@ -255,7 +255,7 @@ class LighterClientAdapter:
                 filled_price=self._dry_run_price,
                 filled_amount=amount,
                 message="模擬交易成功",
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
         
         try:
@@ -277,7 +277,7 @@ class LighterClientAdapter:
                     filled_price=None,  # 市價單無法預知成交價
                     filled_amount=amount,
                     message="訂單提交成功",
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
             else:
                 return OrderResult(
@@ -286,7 +286,7 @@ class LighterClientAdapter:
                     filled_price=None,
                     filled_amount=None,
                     message=result.get("error", "訂單失敗"),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
                 
         except Exception as e:
@@ -296,7 +296,7 @@ class LighterClientAdapter:
                 filled_price=None,
                 filled_amount=None,
                 message=f"訂單失敗: {e}",
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
     
     async def create_limit_order(
@@ -323,7 +323,7 @@ class LighterClientAdapter:
                 filled_price=price,
                 filled_amount=amount,
                 message="模擬限價單成功",
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
         
         try:
@@ -352,7 +352,7 @@ class LighterClientAdapter:
                     filled_price=price,
                     filled_amount=amount,
                     message="限價單提交成功",
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
             else:
                 return OrderResult(
@@ -361,7 +361,7 @@ class LighterClientAdapter:
                     filled_price=None,
                     filled_amount=None,
                     message=result.get("error", "限價單失敗"),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
                 
         except Exception as e:
@@ -371,7 +371,7 @@ class LighterClientAdapter:
                 filled_price=None,
                 filled_amount=None,
                 message=f"限價單失敗: {e}",
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
     
     async def create_stop_loss_order(
@@ -398,7 +398,7 @@ class LighterClientAdapter:
                 filled_price=trigger_price,
                 filled_amount=amount,
                 message="模擬止損單成功",
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
 
         try:
@@ -414,7 +414,7 @@ class LighterClientAdapter:
                     filled_price=None,
                     filled_amount=None,
                     message="無法獲取當前市場價格",
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
 
             # 驗證價格範圍：止損價格不能離當前價格太遠（±15%）
@@ -466,7 +466,7 @@ class LighterClientAdapter:
                     filled_price=None,
                     filled_amount=amount,
                     message="止損單提交成功",
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
             else:
                 return OrderResult(
@@ -475,7 +475,7 @@ class LighterClientAdapter:
                     filled_price=None,
                     filled_amount=None,
                     message=result.get("error", "止損單失敗"),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
                 
         except Exception as e:
@@ -485,7 +485,7 @@ class LighterClientAdapter:
                 filled_price=None,
                 filled_amount=None,
                 message=f"止損單失敗: {e}",
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
     
     async def create_take_profit_order(
@@ -512,7 +512,7 @@ class LighterClientAdapter:
                 filled_price=trigger_price,
                 filled_amount=amount,
                 message="模擬止盈單成功",
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
 
         try:
@@ -528,7 +528,7 @@ class LighterClientAdapter:
                     filled_price=None,
                     filled_amount=None,
                     message="無法獲取當前市場價格",
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
 
             # 驗證價格範圍：止盈價格不能離當前價格太遠（±15%）
@@ -580,7 +580,7 @@ class LighterClientAdapter:
                     filled_price=None,
                     filled_amount=amount,
                     message="止盈單提交成功",
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
             else:
                 return OrderResult(
@@ -589,7 +589,7 @@ class LighterClientAdapter:
                     filled_price=None,
                     filled_amount=None,
                     message=result.get("error", "止盈單失敗"),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
                 
         except Exception as e:
@@ -599,7 +599,7 @@ class LighterClientAdapter:
                 filled_price=None,
                 filled_amount=None,
                 message=f"止盈單失敗: {e}",
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
     
     async def cancel_order(self, order_id: str, market_id: int = None) -> bool:
@@ -683,7 +683,7 @@ class LighterClientAdapter:
                 filled_price=None,
                 filled_amount=None,
                 message="沒有持倉需要平倉",
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(datetime.timezone.utc)
             )
         
         # 根據持倉方向決定平倉方向

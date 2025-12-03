@@ -4,7 +4,7 @@ Lighter Quant Trading Bot
 """
 import asyncio
 import signal
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import uuid
 import os
@@ -98,7 +98,7 @@ class TradingBot:
     def _print_current_status_report(self):
         """打印當前狀態報告"""
         print("\n" + "=" * 80)
-        print(f"                    實時交易狀態報告 ({datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC)")
+        print(f"                    實時交易狀態報告 ({datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC)")
         print("=" * 80)
         
         # 1. 帳戶概況
@@ -157,7 +157,8 @@ class TradingBot:
         if fetch_realtime:
             # 從 API 獲取實時數據
             try:
-                account_info = await self.lighter_client.get_account_info()
+                from exchange import lighter_client as lc_module
+                account_info = await lc_module.get_account_info()
 
                 # 計算盈虧
                 initial_balance = self.risk_manager.initial_balance if self.risk_manager else account_info.balance
@@ -201,8 +202,9 @@ class TradingBot:
         if fetch_realtime:
             # 從 API 獲取實時持倉
             try:
+                from exchange import lighter_client as lc_module
                 for symbol, market_id in self.market_configs:
-                    position = await self.lighter_client.get_position(market_id=market_id)
+                    position = await lc_module.get_position(market_id=market_id)
                     if position and position.size != 0:
                         side = "LONG" if position.size > 0 else "SHORT"
                         pnl_percent = (position.unrealized_pnl / (position.entry_price * abs(position.size))) * 100 if position.entry_price else 0
@@ -275,7 +277,7 @@ class TradingBot:
             })
 
         return {
-            "timestamp": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC'),
+            "timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC'),
             "data_source": "實時 API" if fetch_realtime else "內存快取",
             "account": account_data,
             "positions": positions_data,
@@ -360,7 +362,7 @@ class TradingBot:
                 # 發送啟動通知
                 start_msg = (
                     f"🚀 **Lighter Quant Bot 已啟動**\n"
-                    f"時間: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+                    f"時間: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
                     f"模式: {'模擬交易 (Dry Run)' if self.config.dry_run else '實盤交易'}\n"
                     f"交易市場: {', '.join([s for s, _ in self.market_configs])}\n"
                     f"帳戶餘額: ${self.risk_manager.initial_balance:.2f}"
@@ -538,7 +540,7 @@ class TradingBot:
             # 檢查時間止損 (Mean Reversion)
             if self.signals[symbol].strategy == StrategyType.MEAN_REVERSION:
                 if self.entry_times[symbol]:
-                    holding_periods = (datetime.utcnow() - self.entry_times[symbol]).total_seconds()
+                    holding_periods = (datetime.now(timezone.utc) - self.entry_times[symbol]).total_seconds()
                     holding_periods /= data_fetcher.TIMEFRAME_SECONDS[self.config.timeframe.fast_tf]
                     
                     if holding_periods > self.config.mean_reversion.max_holding_periods:
@@ -711,7 +713,7 @@ class TradingBot:
         
         if result.success:
             self.signals[symbol] = signal
-            self.entry_times[symbol] = datetime.utcnow()
+            self.entry_times[symbol] = datetime.now(timezone.utc)
             
             # 設置止損止盈單
             await self._set_sl_tp_orders_for_market(symbol, market_id, signal, position_size.base_amount)
@@ -807,7 +809,7 @@ class TradingBot:
                     exit_price=exit_price,
                     amount=abs(self.positions[symbol].size),
                     entry_time=self.entry_times[symbol],
-                    exit_time=datetime.utcnow(),
+                    exit_time=datetime.now(timezone.utc),
                     exit_reason=reason
                 )
             
@@ -913,7 +915,7 @@ class TradingBot:
         
         if result.success:
             self.current_signal = signal
-            self.entry_time = datetime.utcnow()
+            self.entry_time = datetime.now(timezone.utc)
             
             # 設置止損止盈單
             await self._set_sl_tp_orders(signal, position_size.base_amount)
@@ -995,7 +997,7 @@ class TradingBot:
                     exit_price=exit_price,
                     amount=abs(self.current_position.size),
                     entry_time=self.entry_time,
-                    exit_time=datetime.utcnow(),
+                    exit_time=datetime.now(timezone.utc),
                     exit_reason=reason
                 )
             

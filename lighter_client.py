@@ -2352,9 +2352,19 @@ class LighterClient:
             
             base_amount_formatted = self._format_amount(base_amount, market_index)
             trigger_price_formatted = self._format_price(trigger_price)
-            
-            # 止損單 (Stop Market) 價格設為 0
-            price_formatted = 0
+
+            # 止損單 (Stop Market) 觸發後的執行價格
+            # 使用觸發價格加上合理的滑點（1%）作為最差可接受價格
+            max_slippage = 0.01  # 1% 滑點
+
+            if is_ask:
+                # 賣單：觸發後最多下跌 1%
+                execution_price = trigger_price * (1 - max_slippage)
+                price_formatted = self._format_price(max(execution_price, 1.0))  # 確保至少 $1
+            else:
+                # 買單：觸發後最多上漲 1%
+                execution_price = trigger_price * (1 + max_slippage)
+                price_formatted = self._format_price(execution_price)
             
             # 獲取下一個 nonce
             next_nonce_response = await self.transaction_api.next_nonce(
@@ -2420,9 +2430,19 @@ class LighterClient:
             
             base_amount_formatted = self._format_amount(base_amount, market_index)
             trigger_price_formatted = self._format_price(trigger_price)
-            
-            # 止盈單 (Take Profit Market) 價格設為 0
-            price_formatted = 0
+
+            # 止盈單 (Take Profit Market) 觸發後的執行價格
+            # 使用觸發價格加上合理的滑點（1%）作為最差可接受價格
+            max_slippage = 0.01  # 1% 滑點
+
+            if is_ask:
+                # 賣單：觸發後最多下跌 1%
+                execution_price = trigger_price * (1 - max_slippage)
+                price_formatted = self._format_price(max(execution_price, 1.0))  # 確保至少 $1
+            else:
+                # 買單：觸發後最多上漲 1%
+                execution_price = trigger_price * (1 + max_slippage)
+                price_formatted = self._format_price(execution_price)
             
             # 獲取下一個 nonce
             next_nonce_response = await self.transaction_api.next_nonce(
@@ -2907,11 +2927,20 @@ class LighterClient:
             # 安全關閉 signer_client 的會話
             try:
                 if hasattr(self, 'signer_client') and self.signer_client:
+                    # SignerClient 有 close() 方法來關閉內部的 aiohttp session
                     if hasattr(self.signer_client, 'close'):
-                        await self.signer_client.close()
-                    elif hasattr(self.signer_client, '_session') and self.signer_client._session:
-                        await self.signer_client._session.close()
-                    logger.debug("SignerClient 會話已關閉")
+                        try:
+                            await self.signer_client.close()
+                            logger.debug("SignerClient 會話已關閉")
+                        except Exception as close_error:
+                            logger.warning(f"SignerClient.close() 失敗: {close_error}")
+                    # 額外嘗試關閉可能存在的內部 session
+                    if hasattr(self.signer_client, 'session') and self.signer_client.session:
+                        try:
+                            await self.signer_client.session.close()
+                            logger.debug("SignerClient 內部 session 已關閉")
+                        except Exception as session_error:
+                            logger.warning(f"關閉 SignerClient.session 失敗: {session_error}")
             except Exception as e:
                 logger.warning(f"關閉 SignerClient 會話時出錯: {e}")
             

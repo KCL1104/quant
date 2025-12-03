@@ -128,7 +128,7 @@ class BaseStrategy(ABC):
             take_profit=stops.take_profit,
             confidence=confidence,
             reason=reason,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(datetime.timezone.utc)
         )
         
         self.last_signal = signal

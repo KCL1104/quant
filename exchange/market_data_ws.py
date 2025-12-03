@@ -131,7 +131,7 @@ class MarketDataWebSocket:
                 daily_price_low=float(stats_data.get("daily_price_low", 0)),
                 daily_price_high=float(stats_data.get("daily_price_high", 0)),
                 daily_price_change=float(stats_data.get("daily_price_change", 0)),
-                last_update=datetime.utcnow()
+                last_update=datetime.now(datetime.timezone.utc)
             )
         except Exception as e:
             logger.error(f"解析市場統計數據失敗: {e}")

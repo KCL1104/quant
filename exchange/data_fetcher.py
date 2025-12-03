@@ -145,8 +145,8 @@ class DataFetcher:
                 cache_key_slow = f"{market_id}_15m"
                 self._candle_cache[cache_key_fast] = df_fast
                 self._candle_cache[cache_key_slow] = df_slow
-                self._last_fetch_time[cache_key_fast] = datetime.utcnow()
-                self._last_fetch_time[cache_key_slow] = datetime.utcnow()
+                self._last_fetch_time[cache_key_fast] = datetime.now(datetime.timezone.utc)
+                self._last_fetch_time[cache_key_slow] = datetime.now(datetime.timezone.utc)
 
                 # 显示最新价格信息
                 if len(df_fast) > 0:
@@ -206,7 +206,7 @@ class DataFetcher:
             candle_api = CandlestickApi(self._api_client)
             
             # 計算時間範圍
-            end_time = int(datetime.utcnow().timestamp())
+            end_time = int(datetime.now(datetime.timezone.utc).timestamp())
             start_time = end_time - (self.TIMEFRAME_SECONDS[timeframe] * count)
             
             response = await candle_api.candlesticks(
@@ -238,7 +238,7 @@ class DataFetcher:
             
             # 更新緩存
             self._candle_cache[cache_key] = df
-            self._last_fetch_time[cache_key] = datetime.utcnow()
+            self._last_fetch_time[cache_key] = datetime.now(datetime.timezone.utc)
             
             return df
             
@@ -255,7 +255,7 @@ class DataFetcher:
         
         # 緩存有效期為時間框架的一半
         cache_duration = self.TIMEFRAME_SECONDS[timeframe] / 2
-        elapsed = (datetime.utcnow() - self._last_fetch_time[cache_key]).total_seconds()
+        elapsed = (datetime.now(datetime.timezone.utc) - self._last_fetch_time[cache_key]).total_seconds()
         
         return elapsed < cache_duration
     
@@ -274,7 +274,7 @@ class DataFetcher:
         volumes = []
         
         current_price = base_price
-        current_time = datetime.utcnow() - timedelta(minutes=count * 5)
+        current_time = datetime.now(datetime.timezone.utc) - timedelta(minutes=count * 5)
         
         for i in range(count):
             # 隨機價格變動
