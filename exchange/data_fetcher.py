@@ -220,8 +220,10 @@ class DataFetcher:
             # 轉換為 DataFrame
             candles = []
             for c in response.candlesticks or []:
+                # API 返回的是毫秒時間戳,需要除以 1000 轉換為秒
+                timestamp_seconds = c.timestamp / 1000 if c.timestamp > 1e10 else c.timestamp
                 candles.append({
-                    'timestamp': datetime.fromtimestamp(c.timestamp),
+                    'timestamp': datetime.fromtimestamp(timestamp_seconds),
                     'open': float(c.open),
                     'high': float(c.high),
                     'low': float(c.low),
@@ -348,6 +350,29 @@ class DataFetcher:
                 latest_15m_price = slow_df['close'].iloc[-1]
                 latest_15m_time = slow_df['timestamp'].iloc[-1]
                 print(f"[Market {market_id}] 15m 最新價格: ${latest_15m_price:.4f} (時間: {latest_15m_time.strftime('%H:%M:%S')}) | 15m K線數: {len(slow_df)}條")
+
+            # 發送價格到 Discord
+            try:
+                from discord.bot import send_notification
+                # 獲取市場符號
+                market_symbol = "Unknown"
+                for symbol, mid in self.config.trading.markets:
+                    if mid == market_id:
+                        market_symbol = symbol
+                        break
+
+                # 構建訊息
+                msg = f"📊 **價格更新** - {market_symbol}\n"
+                msg += f"時間: {latest_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                msg += f"5m 價格: ${latest_price:.4f}\n"
+                if len(slow_df) > 0:
+                    msg += f"15m 價格: ${latest_15m_price:.4f}"
+
+                # 異步發送通知
+                asyncio.create_task(send_notification(msg))
+            except Exception as e:
+                # 靜默失敗，不影響數據獲取
+                pass
 
         return fast_df, slow_df
     

@@ -384,13 +384,13 @@ class LighterClientAdapter:
     ) -> OrderResult:
         """創建止損單"""
         await self.initialize()
-        
+
         if market_id is None:
             market_id = self.config.market_id
-        
+
         # 止損單方向與持倉相反
         is_ask = signal_type == SignalType.LONG  # 做多的止損是賣出
-        
+
         if settings.dry_run:
             return OrderResult(
                 success=True,
@@ -400,8 +400,42 @@ class LighterClientAdapter:
                 message="模擬止損單成功",
                 timestamp=datetime.utcnow()
             )
-        
+
         try:
+            # 獲取當前市場價格進行驗證
+            from .data_fetcher import DataFetcher
+            data_fetcher = DataFetcher(self._client, self.config)
+            current_price = await data_fetcher.get_current_price(market_id=market_id)
+
+            if current_price <= 0:
+                return OrderResult(
+                    success=False,
+                    order_id=None,
+                    filled_price=None,
+                    filled_amount=None,
+                    message="無法獲取當前市場價格",
+                    timestamp=datetime.utcnow()
+                )
+
+            # 驗證價格範圍：止損價格不能離當前價格太遠（±15%）
+            max_price_deviation = 0.15  # 15%
+            price_diff_percent = abs(trigger_price - current_price) / current_price
+
+            if price_diff_percent > max_price_deviation:
+                from utils import bot_logger as logger
+                logger.warning(
+                    f"止損價格 {trigger_price:.2f} 距離當前價格 {current_price:.2f} "
+                    f"太遠 ({price_diff_percent*100:.1f}%)，調整至允許範圍內"
+                )
+                # 調整價格到允許的最大偏離
+                if signal_type == SignalType.LONG:
+                    # 做多止損應該在下方
+                    trigger_price = current_price * (1 - max_price_deviation)
+                else:
+                    # 做空止損應該在上方
+                    trigger_price = current_price * (1 + max_price_deviation)
+                logger.info(f"調整後的止損價格: {trigger_price:.2f}")
+
             client_order_index = int(time.time() * 1000) % 1000000
             
             # 使用 WebSocket 方式創建止損單（如果可用）
@@ -464,13 +498,13 @@ class LighterClientAdapter:
     ) -> OrderResult:
         """創建止盈單"""
         await self.initialize()
-        
+
         if market_id is None:
             market_id = self.config.market_id
-        
+
         # 止盈單方向與持倉相反
         is_ask = signal_type == SignalType.LONG  # 做多的止盈是賣出
-        
+
         if settings.dry_run:
             return OrderResult(
                 success=True,
@@ -480,8 +514,42 @@ class LighterClientAdapter:
                 message="模擬止盈單成功",
                 timestamp=datetime.utcnow()
             )
-        
+
         try:
+            # 獲取當前市場價格進行驗證
+            from .data_fetcher import DataFetcher
+            data_fetcher = DataFetcher(self._client, self.config)
+            current_price = await data_fetcher.get_current_price(market_id=market_id)
+
+            if current_price <= 0:
+                return OrderResult(
+                    success=False,
+                    order_id=None,
+                    filled_price=None,
+                    filled_amount=None,
+                    message="無法獲取當前市場價格",
+                    timestamp=datetime.utcnow()
+                )
+
+            # 驗證價格範圍：止盈價格不能離當前價格太遠（±15%）
+            max_price_deviation = 0.15  # 15%
+            price_diff_percent = abs(trigger_price - current_price) / current_price
+
+            if price_diff_percent > max_price_deviation:
+                from utils import bot_logger as logger
+                logger.warning(
+                    f"止盈價格 {trigger_price:.2f} 距離當前價格 {current_price:.2f} "
+                    f"太遠 ({price_diff_percent*100:.1f}%)，調整至允許範圍內"
+                )
+                # 調整價格到允許的最大偏離
+                if signal_type == SignalType.LONG:
+                    # 做多止盈應該在上方
+                    trigger_price = current_price * (1 + max_price_deviation)
+                else:
+                    # 做空止盈應該在下方
+                    trigger_price = current_price * (1 - max_price_deviation)
+                logger.info(f"調整後的止盈價格: {trigger_price:.2f}")
+
             client_order_index = int(time.time() * 1000) % 1000000
             
             # 使用 WebSocket 方式創建止盈單（如果可用）
