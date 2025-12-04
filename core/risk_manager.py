@@ -209,57 +209,14 @@ class RiskManager:
     
     def calculate_leverage(self) -> float:
         """
-        計算動態槓桿
+        返回固定槓桿
+        
+        注意：動態槓桿調整已移除，現在直接使用 .env 中的 LEVERAGE_BASE 設定
         
         Returns:
-            計算後的槓桿倍數
+            固定槓桿倍數 (來自配置)
         """
-        self._check_reset_periods()
-        
-        leverage = self.config.leverage.base_leverage
-        risk_config = self.config.risk
-        
-        # Step 1: 勝率調整
-        win_rate = self.get_win_rate()
-        if win_rate > risk_config.win_rate_boost_threshold:
-            leverage *= risk_config.win_rate_boost_multiplier
-        elif win_rate < risk_config.win_rate_reduce_threshold:
-            leverage *= risk_config.win_rate_reduce_multiplier
-        
-        # Step 2: 連虧保護 (優先級最高)
-        if self.consecutive_losses >= risk_config.consecutive_loss_threshold_3:
-            return self.config.leverage.min_leverage
-        elif self.consecutive_losses >= risk_config.consecutive_loss_threshold_2:
-            leverage *= risk_config.consecutive_loss_multiplier
-        
-        # Step 3: 連勝獎勵
-        if self.consecutive_wins >= risk_config.consecutive_win_threshold:
-            leverage *= risk_config.consecutive_win_multiplier
-        
-        # Step 4: 日內虧損保護
-        if self.daily_pnl < -risk_config.max_daily_loss:
-            return 0  # 停止交易
-        elif self.daily_pnl < -risk_config.max_daily_loss * 0.5:
-            leverage *= 0.5
-        
-        # Step 5: 回撤保護
-        current_dd = self.get_current_drawdown()
-        if current_dd > risk_config.max_drawdown:
-            return 0  # 停止交易
-        elif current_dd > risk_config.max_drawdown * 0.7:
-            leverage *= 0.6
-        
-        # Step 6: 週盈利保護
-        if self.weekly_pnl > risk_config.weekly_profit_protection:
-            leverage = min(leverage, self.config.leverage.base_leverage)
-        
-        # Step 7: 範圍限制
-        leverage = max(
-            self.config.leverage.min_leverage,
-            min(leverage, self.config.leverage.max_leverage)
-        )
-        
-        return leverage
+        return self.config.leverage.base_leverage
     
     def can_trade(self) -> tuple[bool, Optional[str]]:
         """
@@ -287,11 +244,6 @@ class RiskManager:
         # 檢查連續虧損
         if self.consecutive_losses >= self.config.risk.max_consecutive_losses:
             return False, f"連續虧損 {self.consecutive_losses} 次，需要暫停檢討"
-        
-        # 計算槓桿，如果為 0 則不能交易
-        leverage = self.calculate_leverage()
-        if leverage <= 0:
-            return False, "槓桿計算為 0，風險保護觸發"
         
         return True, None
     

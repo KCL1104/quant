@@ -205,17 +205,19 @@ class LighterClientAdapter:
         signal_type: SignalType,
         amount: float,
         reduce_only: bool = False,
-        market_id: int = None
+        market_id: int = None,
+        current_price: float = None
     ) -> OrderResult:
         """
         創建市價單
-        
+
         Args:
             signal_type: 訊號類型 (LONG/SHORT)
             amount: 基礎資產數量
             reduce_only: 是否僅減倉
             market_id: 市場 ID（可選）
-            
+            current_price: 當前市場價格（可選，用於計算滑點保護）
+
         Returns:
             OrderResult
         """
@@ -267,7 +269,8 @@ class LighterClientAdapter:
                 client_order_index=client_order_index,
                 base_amount=amount,
                 is_ask=is_ask,
-                reduce_only=reduce_only
+                reduce_only=reduce_only,
+                current_price=current_price
             )
             
             if result.get("success"):
@@ -711,21 +714,53 @@ class LighterClientAdapter:
             return True
 
         try:
+            from utils import bot_logger as logger
+
             # 如果指定了 market_id，只取消該市場的訂單
             if market_id is not None:
                 if hasattr(self._client, 'cancel_orders_by_market'):
                     result = await self._client.cancel_orders_by_market(market_id)
+                    return result.get("success", False)
                 elif hasattr(self._client, 'cancel_all_orders_for_market'):
                     result = await self._client.cancel_all_orders_for_market(market_id)
+                    return result.get("success", False)
                 else:
-                    # 如果 SDK 不支持按市場取消，獲取該市場的所有訂單並逐一取消
-                    from utils import bot_logger as logger
-                    logger.warning(f"SDK 不支持按市場取消訂單，將取消所有市場的訂單")
-                    result = await self._client.cancel_all_orders()
+                    # SDK 不支持按市場批量取消，改用逐一取消的方式
+                    logger.info(f"SDK 不支持按市場批量取消，將逐一取消 market_id={market_id} 的訂單")
+
+                    # 獲取該市場的所有掛單
+                    orders_result = await self._client.get_open_orders(market_id)
+                    if not orders_result.get("success"):
+                        logger.warning(f"無法獲取 market_id={market_id} 的訂單列表")
+                        return False
+
+                    open_orders = orders_result.get("open_orders", [])
+                    if not open_orders:
+                        logger.info(f"market_id={market_id} 沒有待取消的訂單")
+                        return True
+
+                    # 逐一取消訂單
+                    success_count = 0
+                    for order in open_orders:
+                        order_index = order.get("order_index")
+                        order_market = order.get("market_index")
+                        if order_index is not None and order_market == market_id:
+                            try:
+                                cancel_result = await self._client.cancel_order_by_market_index(
+                                    market_index=market_id,
+                                    order_index=order_index
+                                )
+                                if cancel_result.get("success"):
+                                    success_count += 1
+                            except Exception as cancel_err:
+                                logger.warning(f"取消訂單 {order_index} 失敗: {cancel_err}")
+
+                    logger.info(f"market_id={market_id} 取消了 {success_count}/{len(open_orders)} 個訂單")
+                    return success_count > 0 or len(open_orders) == 0
             else:
                 # 沒有指定 market_id，取消所有訂單
                 result = await self._client.cancel_all_orders()
-            return result.get("success", False)
+                return result.get("success", False)
         except Exception as e:
             from utils import bot_logger as logger
             logger.error(f"取消訂單失敗: {e}")

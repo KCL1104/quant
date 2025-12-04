@@ -22,6 +22,7 @@ from core import (
     position_manager,
     IndicatorValues,
     MarketState,
+    signal_readiness_checker,
 )
 from strategies import (
     momentum_v2,
@@ -340,7 +341,26 @@ class TradingBot:
             if position and position.size != 0:
                 logger.warning(f"[{symbol}] 檢測到現有持倉: {position.size:.6f}")
                 self.positions[symbol] = position
-        
+
+        # 為每個市場初始化槓桿
+        base_leverage = self.config.leverage.base_leverage
+        margin_mode = self.config.leverage.margin_mode
+        logger.info(f"初始化槓桿設定: {base_leverage}x, 模式: {'全倉' if margin_mode == 0 else '逐倉'}")
+
+        for symbol, market_id in self.market_configs:
+            try:
+                result = await lighter_client.update_leverage(
+                    leverage=base_leverage,
+                    market_id=market_id,
+                    margin_mode=margin_mode
+                )
+                if result.success:
+                    logger.info(f"[{symbol}] 槓桿初始化成功: {base_leverage}x")
+                else:
+                    logger.warning(f"[{symbol}] 槓桿初始化失敗: {result.message}")
+            except Exception as e:
+                logger.error(f"[{symbol}] 槓桿初始化異常: {e}")
+
         logger.info("初始化完成")
     
     async def run(self):
@@ -542,6 +562,16 @@ class TradingBot:
         market_state = detector.detect(indicator_values)
         logger.debug(f"[{symbol}] 市場狀態: {market_state.regime.value} - {market_state.description}")
         
+        # 5.5 計算並更新訊號準備度 (用於 Discord 通知)
+        try:
+            readiness_data = signal_readiness_checker.get_all_readiness(indicator_values, market_state)
+            from discord.bot import update_signal_readiness
+            update_signal_readiness(symbol, readiness_data)
+        except ImportError:
+            pass  # Discord 模組未安裝
+        except Exception as e:
+            logger.debug(f"[{symbol}] 訊號準備度更新失敗: {e}")
+        
         # 6. 檢查現有持倉
         self.positions[symbol] = await lighter_client.get_position(market_id=market_id)
         has_position = self.positions[symbol] and self.positions[symbol].size != 0
@@ -730,7 +760,8 @@ class TradingBot:
         result = await lighter_client.create_market_order(
             signal_type=signal.signal_type,
             amount=position_size.base_amount,
-            market_id=market_id
+            market_id=market_id,
+            current_price=signal.entry_price
         )
         
         if result.success:
@@ -927,9 +958,10 @@ class TradingBot:
         # 執行市價單
         result = await lighter_client.create_market_order(
             signal_type=signal.signal_type,
-            amount=position_size.base_amount
+            amount=position_size.base_amount,
+            current_price=signal.entry_price
         )
-        
+
         if result.success:
             self.current_signal = signal
             self.entry_time = datetime.now(timezone.utc)

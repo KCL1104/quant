@@ -899,18 +899,20 @@ class LighterClient:
                                 base_amount: float,
                                 is_ask: bool,
                                 reduce_only: bool = False,
-                                max_slippage: Optional[float] = 0.1) -> Dict:
+                                max_slippage: Optional[float] = 0.1,
+                                current_price: Optional[float] = None) -> Dict:
         """
         創建市價訂單 - 重構版本，直接使用 signer_client
-        
+
         Args:
             market_index: 市場索引
             client_order_index: 客戶端訂單索引
             base_amount: 基礎數量
             is_ask: 是否為賣單 (True=賣, False=買)
             reduce_only: 是否僅減倉
-            max_slippage: 最大滑點 (可選)
-            
+            max_slippage: 最大滑點 (可選，預設 0.1 即 10%)
+            current_price: 當前市場價格 (可選，用於計算滑點保護價格)
+
         Returns:
             Dict: 訂單創建結果
         """
@@ -937,20 +939,26 @@ class LighterClient:
                     # Fallback to regular market order if limited slippage method is not available
                     # For market orders, we need to provide a worst acceptable price
                     # This acts as a protection similar to slippage
-                    
-                    # Get current market price to calculate worst price
-                    # Since we don't have easy access to orderbook here, we'll use a very wide range
-                    # In a real production system, you should fetch the current price first
-                    
-                    if is_ask:
-                        # Selling: worst price is very low (e.g. 0.1)
-                        # Lighter API expects integer price (x100000)
-                        worst_price = 1000 # 0.01 * 100000
+
+                    # 根據 current_price 計算滑點保護價格
+                    if current_price is not None and current_price > 0:
+                        slippage = max_slippage if max_slippage else 0.1
+                        if is_ask:
+                            # 賣單：允許價格低於當前價 (1 - slippage)
+                            worst_price = int(current_price * (1 - slippage) * 100000)
+                        else:
+                            # 買單：允許價格高於當前價 (1 + slippage)
+                            worst_price = int(current_price * (1 + slippage) * 100000)
                     else:
-                        # Buying: worst price is very high (e.g. 1,000,000)
-                        worst_price = 100000000000 # 1,000,000 * 100000
-                        
-                    logger.info(f"Falling back to regular create_market_order with worst_price: {worst_price}")
+                        # 沒有提供當前價格，使用極端保守值
+                        if is_ask:
+                            # 賣單：使用 $0.01 作為最低價格保護
+                            worst_price = 1000  # 0.01 * 100000
+                        else:
+                            # 買單：使用 $10,000,000 作為最高價格保護
+                            worst_price = 1000000000000  # 10,000,000 * 100000
+
+                    logger.info(f"Falling back to regular create_market_order with worst_price: {worst_price / 100000:.2f}")
                     
                     # 確保 SignerClient 使用正確的私鑰和帳戶信息
                     if self.signer_client.account_index != self.account_index:
@@ -972,13 +980,23 @@ class LighterClient:
                     )
             else:
                 # 使用普通市價訂單 (需要平均執行價格)
-                # 根據範例，使用較高的價格作為 worst acceptable price
-                if is_ask:
-                    # 賣單：使用較低的價格作為最差可接受價格
-                    avg_execution_price = int(1000 * 100)  # $10.00 作為最低價格
+                # 根據 current_price 計算滑點保護價格
+                if current_price is not None and current_price > 0:
+                    default_slippage = 0.1  # 預設 10% 滑點
+                    if is_ask:
+                        # 賣單：允許價格低於當前價 (1 - slippage)
+                        avg_execution_price = int(current_price * (1 - default_slippage) * 100000)
+                    else:
+                        # 買單：允許價格高於當前價 (1 + slippage)
+                        avg_execution_price = int(current_price * (1 + default_slippage) * 100000)
                 else:
-                    # 買單：使用較高的價格作為最差可接受價格  
-                    avg_execution_price = int(100000 * 100)  # $1000.00 作為最高價格
+                    # 沒有提供當前價格，使用極端保守值
+                    if is_ask:
+                        # 賣單：使用 $0.01 作為最低價格保護
+                        avg_execution_price = 1000  # 0.01 * 100000
+                    else:
+                        # 買單：使用 $10,000,000 作為最高價格保護
+                        avg_execution_price = 1000000000000  # 10,000,000 * 100000
                 
                 # 確保 SignerClient 使用正確的私鑰和帳戶信息
                 if self.signer_client.account_index != self.account_index:

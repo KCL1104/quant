@@ -3,13 +3,16 @@ import os
 import dotenv
 from discord import app_commands  
 import asyncio
-from typing import Optional
+from typing import Optional, Dict
 
 # 全域變數，用於與 TradingBot 交互
 trading_bot_instance = None
 
 # 全域變數，用於存儲最新的指標數據 (由 main.py 更新)
 latest_indicators: dict = {}
+
+# 全域變數，用於存儲最新的訊號準備度數據
+latest_signal_readiness: Dict[str, dict] = {}
 
 dotenv.load_dotenv()
 
@@ -156,6 +159,110 @@ async def status_now(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"❌ 獲取報告失敗: {str(e)}")
 
+@tree.command(name="signals")
+async def signals(interaction: discord.Interaction):
+    """獲取所有市場的訊號準備度"""
+    global trading_bot_instance, latest_signal_readiness
+    
+    if not trading_bot_instance:
+        await interaction.response.send_message("❌ 交易機器人未連接")
+        return
+    
+    await interaction.response.defer()
+    
+    try:
+        # 從 trading_bot 獲取市場配置
+        market_configs = trading_bot_instance.market_configs
+        
+        embed = discord.Embed(
+            title="📊 訊號準備度報告",
+            description="各市場進場條件準備狀態",
+            color=discord.Color.blue()
+        )
+        
+        for symbol, market_id in market_configs:
+            if symbol in latest_signal_readiness:
+                data = latest_signal_readiness[symbol]
+                field_value = _format_signal_embed_field(data)
+            else:
+                field_value = "⚠️ 無數據 - 等待下一次計算"
+            
+            embed.add_field(
+                name=f"💹 {symbol}",
+                value=field_value,
+                inline=False
+            )
+        
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        await interaction.followup.send(f"❌ 獲取訊號準備度失敗: {str(e)}")
+
+
+def _format_signal_embed_field(readiness_data: dict) -> str:
+    """格式化單一市場的訊號準備度為 embed field"""
+    momentum_long = readiness_data.get('momentum_long')
+    momentum_short = readiness_data.get('momentum_short')
+    mr_long = readiness_data.get('mr_long')
+    mr_short = readiness_data.get('mr_short')
+    
+    # 判斷市場狀態
+    if momentum_long and momentum_long.conditions:
+        market_regime_cond = momentum_long.conditions[0]
+        is_trending = market_regime_cond.status.value == "met"
+    else:
+        is_trending = False
+    
+    if is_trending:
+        strategy = "📈 Momentum"
+        long_r = momentum_long
+        short_r = momentum_short
+    else:
+        strategy = "⇄ Mean Reversion"
+        long_r = mr_long
+        short_r = mr_short
+    
+    result = f"**{strategy}**\n"
+    
+    # Long
+    if long_r:
+        pct = long_r.readiness_percent
+        met = long_r.met_count
+        total = long_r.total_count
+        status = "🟢" if pct == 100 else "🟡" if pct >= 70 else "🟠" if pct >= 40 else "🔴"
+        result += f"{status} LONG: **{met}/{total}** ({pct:.0f}%)\n"
+    else:
+        result += "⚪ LONG: N/A\n"
+    
+    # Short
+    if short_r:
+        pct = short_r.readiness_percent
+        met = short_r.met_count
+        total = short_r.total_count
+        status = "🟢" if pct == 100 else "🟡" if pct >= 70 else "🟠" if pct >= 40 else "🔴"
+        result += f"{status} SHORT: **{met}/{total}** ({pct:.0f}%)"
+    else:
+        result += "⚪ SHORT: N/A"
+    
+    return result
+
+
+@tree.command(name="signal_detail")
+async def signal_detail(interaction: discord.Interaction, symbol: str):
+    """獲取指定市場的詳細訊號準備度"""
+    global latest_signal_readiness
+    
+    symbol = symbol.upper()
+    
+    if symbol not in latest_signal_readiness:
+        await interaction.response.send_message(f"❌ 找不到 {symbol} 的訊號數據")
+        return
+    
+    data = latest_signal_readiness[symbol]
+    msg = format_signal_readiness_message(symbol, data)
+    
+    await interaction.response.send_message(msg)
+
 async def send_notification(message: str):
     """發送通知到 Discord"""
     global channel
@@ -227,6 +334,156 @@ def get_indicator_message(symbol: str) -> str:
     msg += f"└ ATR: {ind.atr:.4f} ({ind.atr_percent*100:.2f}%)"
     
     return msg
+
+
+def update_signal_readiness(symbol: str, readiness_data: dict):
+    """
+    更新指定市場的訊號準備度數據
+    
+    Args:
+        symbol: 市場符號 (e.g., "ETH", "BNB")
+        readiness_data: 訊號準備度數據字典
+    """
+    global latest_signal_readiness
+    latest_signal_readiness[symbol] = readiness_data
+
+
+def format_signal_readiness_message(symbol: str, readiness_data: dict) -> str:
+    """
+    格式化訊號準備度為 Discord 訊息
+    
+    Args:
+        symbol: 市場符號
+        readiness_data: 包含 'momentum_long', 'momentum_short', 'mr_long', 'mr_short' 的字典
+    
+    Returns:
+        格式化的訊息字串
+    """
+    msg = f"📊 **{symbol} 訊號準備度**\n"
+    msg += "━" * 25 + "\n\n"
+    
+    # 根據市場狀態顯示適用的策略
+    momentum_long = readiness_data.get('momentum_long')
+    momentum_short = readiness_data.get('momentum_short')
+    mr_long = readiness_data.get('mr_long')
+    mr_short = readiness_data.get('mr_short')
+    
+    # 判斷當前適用的策略 (基於市場狀態)
+    # 趨勢市 -> Momentum, 震盪市 -> Mean Reversion
+    if momentum_long:
+        # 先檢查市場狀態
+        market_regime_cond = momentum_long.conditions[0] if momentum_long.conditions else None
+        is_trending = market_regime_cond and market_regime_cond.status.value == "met"
+        
+        if is_trending:
+            msg += "**📈 趨勢市 - Momentum 策略**\n\n"
+            msg += _format_single_readiness(momentum_long, "🟢 LONG")
+            msg += "\n"
+            msg += _format_single_readiness(momentum_short, "🔴 SHORT")
+        else:
+            msg += "**⇄ 震盪市 - Mean Reversion 策略**\n\n"
+            msg += _format_single_readiness(mr_long, "🟢 LONG")
+            msg += "\n"
+            msg += _format_single_readiness(mr_short, "🔴 SHORT")
+    
+    return msg
+
+
+def _format_single_readiness(readiness, direction_label: str) -> str:
+    """
+    格式化單一方向的準備度
+    """
+    if not readiness:
+        return f"{direction_label}: 無數據\n"
+    
+    met = readiness.met_count
+    total = readiness.total_count
+    pct = readiness.readiness_percent
+    
+    # 準備度顏色
+    if pct == 100:
+        status_emoji = "🟢"
+    elif pct >= 70:
+        status_emoji = "🟡"
+    elif pct >= 40:
+        status_emoji = "🟠"
+    else:
+        status_emoji = "🔴"
+    
+    msg = f"{direction_label} ({readiness.strategy})\n"
+    msg += f"{status_emoji} **{met}/{total}** 條件達成 ({pct:.0f}%)\n"
+    
+    # 條件詳情
+    for cond in readiness.conditions:
+        emoji = "✅" if cond.status.value == "met" else "❌"
+        msg += f"  {emoji} {cond.name}\n"
+        msg += f"      現值: `{cond.current_value}`\n"
+        msg += f"      需要: `{cond.required_value}`\n"
+    
+    return msg
+
+
+def get_signal_summary_message(symbol: str) -> str:
+    """
+    獲取簡短的訊號摘要訊息 (用於定期通知)
+    
+    Args:
+        symbol: 市場符號
+    
+    Returns:
+        簡短的訊號摘要
+    """
+    if symbol not in latest_signal_readiness:
+        return f"{symbol}: 無訊號數據"
+    
+    data = latest_signal_readiness[symbol]
+    
+    # 取得所有準備度
+    results = []
+    
+    momentum_long = data.get('momentum_long')
+    momentum_short = data.get('momentum_short')
+    mr_long = data.get('mr_long')
+    mr_short = data.get('mr_short')
+    
+    # 找出最佳機會
+    best = None
+    best_pct = 0
+    
+    for name, readiness in [('MOM LONG', momentum_long), ('MOM SHORT', momentum_short), 
+                            ('MR LONG', mr_long), ('MR SHORT', mr_short)]:
+        if readiness and readiness.readiness_percent > best_pct:
+            best_pct = readiness.readiness_percent
+            best = (name, readiness)
+    
+    if best:
+        name, readiness = best
+        met = readiness.met_count
+        total = readiness.total_count
+        
+        if best_pct == 100:
+            status = "🟢 READY"
+        elif best_pct >= 70:
+            status = "🟡 ALMOST"
+        else:
+            status = "🔴 WAITING"
+        
+        return f"`{symbol}` {status} | 最佳: {name} ({met}/{total})"
+    
+    return f"`{symbol}` 🔴 無交易機會"
+
+
+async def send_signal_readiness_notification(symbol: str, readiness_data: dict):
+    """
+    發送訊號準備度通知到 Discord
+    """
+    global channel
+    if not channel:
+        channel = client.get_channel(TARGET_CHANNEL_ID)
+    
+    if channel:
+        msg = format_signal_readiness_message(symbol, readiness_data)
+        await channel.send(msg)
 
 
 def run_discord_bot(token, bot_instance):
