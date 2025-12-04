@@ -36,7 +36,7 @@ async def on_ready():
         if GUILD_ID:
             # 優先同步到指定伺服器 (立即生效)
             guild = discord.Object(id=int(GUILD_ID))
-            tree.copy_global_to(guild)  # 複製全域指令到 guild
+            tree.copy_global_to(guild=guild)  # 複製全域指令到 guild
             synced = await tree.sync(guild=guild)
             print(f"已同步 {len(synced)} 個指令到伺服器 {GUILD_ID} (立即生效)")
         
