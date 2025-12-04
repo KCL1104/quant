@@ -360,6 +360,9 @@ class TradingBot:
                     logger.warning(f"[{symbol}] 槓桿初始化失敗: {result.message}")
             except Exception as e:
                 logger.error(f"[{symbol}] 槓桿初始化異常: {e}")
+            
+            # 避免 API 速率限制 (1 request per second)
+            await asyncio.sleep(1.2)
 
         logger.info("初始化完成")
     

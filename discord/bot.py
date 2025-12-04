@@ -200,29 +200,38 @@ async def signals(interaction: discord.Interaction):
 
 
 def _format_signal_embed_field(readiness_data: dict) -> str:
-    """格式化單一市場的訊號準備度為 embed field"""
+    """格式化單一市場的訊號準備度為 embed field (顯示兩種策略)"""
     momentum_long = readiness_data.get('momentum_long')
     momentum_short = readiness_data.get('momentum_short')
     mr_long = readiness_data.get('mr_long')
     mr_short = readiness_data.get('mr_short')
     
-    # 判斷市場狀態
+    # 判斷當前市場狀態 (用於標記 active)
     if momentum_long and momentum_long.conditions:
         market_regime_cond = momentum_long.conditions[0]
         is_trending = market_regime_cond.status.value == "met"
     else:
         is_trending = False
     
-    if is_trending:
-        strategy = "📈 Momentum"
-        long_r = momentum_long
-        short_r = momentum_short
-    else:
-        strategy = "⇄ Mean Reversion"
-        long_r = mr_long
-        short_r = mr_short
+    result = ""
     
-    result = f"**{strategy}**\n"
+    # Momentum 策略
+    active_mom = "⚡" if is_trending else ""
+    result += f"**📈 Momentum** {active_mom}\n"
+    result += _format_strategy_line(momentum_long, momentum_short)
+    result += "\n"
+    
+    # Mean Reversion 策略
+    active_mr = "⚡" if not is_trending else ""
+    result += f"**⇄ Mean Rev** {active_mr}\n"
+    result += _format_strategy_line(mr_long, mr_short)
+    
+    return result
+
+
+def _format_strategy_line(long_r, short_r) -> str:
+    """格式化單一策略的 LONG/SHORT 行"""
+    result = ""
     
     # Long
     if long_r:
@@ -230,9 +239,11 @@ def _format_signal_embed_field(readiness_data: dict) -> str:
         met = long_r.met_count
         total = long_r.total_count
         status = "🟢" if pct == 100 else "🟡" if pct >= 70 else "🟠" if pct >= 40 else "🔴"
-        result += f"{status} LONG: **{met}/{total}** ({pct:.0f}%)\n"
+        result += f"{status} L:{met}/{total}"
     else:
-        result += "⚪ LONG: N/A\n"
+        result += "⚪ L:N/A"
+    
+    result += " | "
     
     # Short
     if short_r:
@@ -240,9 +251,9 @@ def _format_signal_embed_field(readiness_data: dict) -> str:
         met = short_r.met_count
         total = short_r.total_count
         status = "🟢" if pct == 100 else "🟡" if pct >= 70 else "🟠" if pct >= 40 else "🔴"
-        result += f"{status} SHORT: **{met}/{total}** ({pct:.0f}%)"
+        result += f"{status} S:{met}/{total}"
     else:
-        result += "⚪ SHORT: N/A"
+        result += "⚪ S:N/A"
     
     return result
 
@@ -350,7 +361,7 @@ def update_signal_readiness(symbol: str, readiness_data: dict):
 
 def format_signal_readiness_message(symbol: str, readiness_data: dict) -> str:
     """
-    格式化訊號準備度為 Discord 訊息
+    格式化訊號準備度為 Discord 訊息 (顯示兩種策略)
     
     Args:
         symbol: 市場符號
@@ -362,29 +373,33 @@ def format_signal_readiness_message(symbol: str, readiness_data: dict) -> str:
     msg = f"📊 **{symbol} 訊號準備度**\n"
     msg += "━" * 25 + "\n\n"
     
-    # 根據市場狀態顯示適用的策略
     momentum_long = readiness_data.get('momentum_long')
     momentum_short = readiness_data.get('momentum_short')
     mr_long = readiness_data.get('mr_long')
     mr_short = readiness_data.get('mr_short')
     
-    # 判斷當前適用的策略 (基於市場狀態)
-    # 趨勢市 -> Momentum, 震盪市 -> Mean Reversion
-    if momentum_long:
-        # 先檢查市場狀態
-        market_regime_cond = momentum_long.conditions[0] if momentum_long.conditions else None
-        is_trending = market_regime_cond and market_regime_cond.status.value == "met"
-        
-        if is_trending:
-            msg += "**📈 趨勢市 - Momentum 策略**\n\n"
-            msg += _format_single_readiness(momentum_long, "🟢 LONG")
-            msg += "\n"
-            msg += _format_single_readiness(momentum_short, "🔴 SHORT")
-        else:
-            msg += "**⇄ 震盪市 - Mean Reversion 策略**\n\n"
-            msg += _format_single_readiness(mr_long, "🟢 LONG")
-            msg += "\n"
-            msg += _format_single_readiness(mr_short, "🔴 SHORT")
+    # 判斷當前市場狀態
+    if momentum_long and momentum_long.conditions:
+        market_regime_cond = momentum_long.conditions[0]
+        is_trending = market_regime_cond.status.value == "met"
+    else:
+        is_trending = False
+    
+    # 顯示 Momentum 策略
+    active_mom = "⚡ ACTIVE" if is_trending else ""
+    msg += f"**📈 Momentum 策略** {active_mom}\n\n"
+    msg += _format_single_readiness(momentum_long, "🟢 LONG")
+    msg += "\n"
+    msg += _format_single_readiness(momentum_short, "🔴 SHORT")
+    
+    msg += "\n" + "─" * 25 + "\n\n"
+    
+    # 顯示 Mean Reversion 策略
+    active_mr = "⚡ ACTIVE" if not is_trending else ""
+    msg += f"**⇄ Mean Reversion 策略** {active_mr}\n\n"
+    msg += _format_single_readiness(mr_long, "🟢 LONG")
+    msg += "\n"
+    msg += _format_single_readiness(mr_short, "🔴 SHORT")
     
     return msg
 
@@ -425,7 +440,7 @@ def _format_single_readiness(readiness, direction_label: str) -> str:
 
 def get_signal_summary_message(symbol: str) -> str:
     """
-    獲取簡短的訊號摘要訊息 (用於定期通知)
+    獲取簡短的訊號摘要訊息 (用於定期通知) - 顯示兩種策略
     
     Args:
         symbol: 市場符號
@@ -438,39 +453,31 @@ def get_signal_summary_message(symbol: str) -> str:
     
     data = latest_signal_readiness[symbol]
     
-    # 取得所有準備度
-    results = []
-    
     momentum_long = data.get('momentum_long')
     momentum_short = data.get('momentum_short')
     mr_long = data.get('mr_long')
     mr_short = data.get('mr_short')
     
-    # 找出最佳機會
-    best = None
-    best_pct = 0
+    # 判斷當前市場狀態
+    if momentum_long and momentum_long.conditions:
+        market_regime_cond = momentum_long.conditions[0]
+        is_trending = market_regime_cond.status.value == "met"
+    else:
+        is_trending = False
     
-    for name, readiness in [('MOM LONG', momentum_long), ('MOM SHORT', momentum_short), 
-                            ('MR LONG', mr_long), ('MR SHORT', mr_short)]:
-        if readiness and readiness.readiness_percent > best_pct:
-            best_pct = readiness.readiness_percent
-            best = (name, readiness)
+    # 格式化 Momentum
+    mom_l = f"{momentum_long.met_count}/{momentum_long.total_count}" if momentum_long else "N/A"
+    mom_s = f"{momentum_short.met_count}/{momentum_short.total_count}" if momentum_short else "N/A"
     
-    if best:
-        name, readiness = best
-        met = readiness.met_count
-        total = readiness.total_count
-        
-        if best_pct == 100:
-            status = "🟢 READY"
-        elif best_pct >= 70:
-            status = "🟡 ALMOST"
-        else:
-            status = "🔴 WAITING"
-        
-        return f"`{symbol}` {status} | 最佳: {name} ({met}/{total})"
+    # 格式化 Mean Reversion
+    mr_l = f"{mr_long.met_count}/{mr_long.total_count}" if mr_long else "N/A"
+    mr_s = f"{mr_short.met_count}/{mr_short.total_count}" if mr_short else "N/A"
     
-    return f"`{symbol}` 🔴 無交易機會"
+    # Active 標記
+    mom_mark = "⚡" if is_trending else ""
+    mr_mark = "⚡" if not is_trending else ""
+    
+    return f"`{symbol}` 📈{mom_mark} L:{mom_l} S:{mom_s} | ⇄{mr_mark} L:{mr_l} S:{mr_s}"
 
 
 async def send_signal_readiness_notification(symbol: str, readiness_data: dict):

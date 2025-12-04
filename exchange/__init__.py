@@ -3,6 +3,7 @@ from .lighter_client import (
     LighterClientAdapter,
     lighter_client,
     OrderResult,
+    LeverageResult,
     Position,
     AccountInfo,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "LighterClientAdapter",
     "lighter_client",
     "OrderResult",
+    "LeverageResult",
     "Position",
     "AccountInfo",
     "DataFetcher",

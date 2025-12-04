@@ -23,6 +23,13 @@ class OrderResult:
 
 
 @dataclass
+class LeverageResult:
+    """槓桿更新結果"""
+    success: bool
+    message: str
+
+
+@dataclass
 class Position:
     """持倉資訊"""
     market_id: int
@@ -771,7 +778,7 @@ class LighterClientAdapter:
         leverage: float,
         market_id: int = None,
         margin_mode: int = None
-    ) -> bool:
+    ) -> LeverageResult:
         """
         更新槓桿
         
@@ -783,12 +790,12 @@ class LighterClientAdapter:
                 - 1: ISOLATED_MARGIN_MODE (逐倉模式)
         
         Returns:
-            bool: 是否成功
+            LeverageResult: 槓桿更新結果
         """
         await self.initialize()
         
         if settings.dry_run:
-            return True
+            return LeverageResult(success=True, message="模擬模式槓桿設定成功")
         
         try:
             if hasattr(self._client, 'update_leverage'):
@@ -801,12 +808,14 @@ class LighterClientAdapter:
                     leverage=leverage,
                     margin_mode=margin_mode
                 )
-                return result.get("success", True)
-            return True
+                success = result.get("success", True)
+                message = result.get("message", "槓桿更新成功" if success else "槓桿更新失敗")
+                return LeverageResult(success=success, message=message)
+            return LeverageResult(success=True, message="客戶端不支持槓桿更新")
         except Exception as e:
             from utils import bot_logger as logger
             logger.error(f"更新槓桿失敗: {e}")
-            return False
+            return LeverageResult(success=False, message=str(e))
     
     async def close_position(self, market_id: int = None) -> OrderResult:
         """平倉"""
