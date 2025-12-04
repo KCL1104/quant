@@ -8,6 +8,9 @@ from typing import Optional
 # 全域變數，用於與 TradingBot 交互
 trading_bot_instance = None
 
+# 全域變數，用於存儲最新的指標數據 (由 main.py 更新)
+latest_indicators: dict = {}
+
 dotenv.load_dotenv()
 
 # 使用預設 intents，不啟用任何特權 intents  
@@ -17,6 +20,9 @@ tree = app_commands.CommandTree(client)
   
 # 目標頻道 ID  
 TARGET_CHANNEL_ID = 1445689711921332315  # 替換為實際頻道 ID  
+# Guild ID for immediate slash command sync (set to None for global sync only)
+# 設置你的 Discord 伺服器 ID 以立即同步斜線指令
+GUILD_ID = os.getenv("DISCORD_GUILD_ID")  # 可選: 設置為你的伺服器 ID
 channel = None
 
 @client.event
@@ -24,7 +30,21 @@ async def on_ready():
     """機器人啟動完成"""
     global channel
     print(f'Discord Bot 已登入身分：{client.user}')
-    await tree.sync()
+    
+    # Sync commands - guild-specific for immediate availability, then global
+    try:
+        if GUILD_ID:
+            # 優先同步到指定伺服器 (立即生效)
+            guild = discord.Object(id=int(GUILD_ID))
+            synced = await tree.sync(guild=guild)
+            print(f"已同步 {len(synced)} 個指令到伺服器 {GUILD_ID} (立即生效)")
+        
+        # 全域同步 (可能需要最多 1 小時生效)
+        synced = await tree.sync()
+        print(f"已全域同步 {len(synced)} 個指令 (可能需要時間生效)")
+    except Exception as e:
+        print(f"指令同步失敗: {e}")
+    
     channel = client.get_channel(TARGET_CHANNEL_ID)
     if not channel:
         print(f"警告: 找不到目標頻道 ID {TARGET_CHANNEL_ID}")
@@ -80,12 +100,12 @@ async def status(interaction: discord.Interaction):
         # 帳戶概況
         acc = report['account']
         account_text = f"""
-當前餘額: ${acc['current_balance']:.2f}
-初始餘額: ${acc['initial_balance']:.2f}
-總盈虧: ${acc['total_pnl']:.2f} ({acc['pnl_percent']:.2f}%)
-最大回撤: {acc['drawdown']:.2f}%
-勝率: {acc['win_rate']:.1f}%
-"""
+            當前餘額: ${acc['current_balance']:.2f}
+            初始餘額: ${acc['initial_balance']:.2f}
+            總盈虧: ${acc['total_pnl']:.2f} ({acc['pnl_percent']:.2f}%)
+            最大回撤: {acc['drawdown']:.2f}%
+            勝率: {acc['win_rate']:.1f}%
+            """
         # 如果有額外字段（實時數據）
         if 'total_asset_value' in acc:
             account_text += f"總資產: ${acc['total_asset_value']:.2f}\n"
@@ -138,6 +158,70 @@ async def send_notification(message: str):
     
     if channel:
         await channel.send(message)
+
+
+def update_indicators(symbol: str, indicator_values):
+    """
+    更新指定市場的最新指標數據
+    
+    Args:
+        symbol: 市場符號 (e.g., "ETH", "BNB")
+        indicator_values: IndicatorValues 實例
+    """
+    global latest_indicators
+    latest_indicators[symbol] = indicator_values
+
+
+def get_indicator_message(symbol: str) -> str:
+    """
+    獲取指定市場的指標訊息字串
+    
+    Args:
+        symbol: 市場符號
+        
+    Returns:
+        格式化的指標訊息
+    """
+    if symbol not in latest_indicators:
+        return ""
+    
+    ind = latest_indicators[symbol]
+    
+    # Supertrend 方向
+    st_fast_dir = "🟢 UP" if ind.supertrend_fast.direction.value == 1 else "🔴 DOWN"
+    st_slow_dir = "🟢 UP" if ind.supertrend_slow.direction.value == 1 else "🔴 DOWN"
+    
+    # RSI 狀態
+    if ind.rsi >= 70:
+        rsi_status = "🔴 超買"
+    elif ind.rsi <= 30:
+        rsi_status = "🟢 超賣"
+    else:
+        rsi_status = "⚪ 中性"
+    
+    # 市場狀態 (ADX)
+    if ind.adx >= 25:
+        market_status = "📊 趨勢市" if ind.plus_di > ind.minus_di else "📊 趨勢市 (空)"
+    else:
+        market_status = "⇄ 震盪市"
+    
+    # BB Position
+    if ind.bollinger.position >= 0.9:
+        bb_status = "‼️ 近上軌"
+    elif ind.bollinger.position <= 0.1:
+        bb_status = "‼️ 近下軌"
+    else:
+        bb_status = f"{ind.bollinger.position:.0%}"
+    
+    msg = f"\n📈 **技術指標**\n"
+    msg += f"└ Supertrend: 5m {st_fast_dir} | 15m {st_slow_dir}\n"
+    msg += f"└ RSI({ind.rsi:.1f}): {rsi_status}\n"
+    msg += f"└ ADX({ind.adx:.1f}): {market_status}\n"
+    msg += f"└ BB Position: {bb_status}\n"
+    msg += f"└ ATR: {ind.atr:.4f} ({ind.atr_percent*100:.2f}%)"
+    
+    return msg
+
 
 def run_discord_bot(token, bot_instance):
     """運行 Discord 機器人"""

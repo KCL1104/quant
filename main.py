@@ -526,6 +526,13 @@ class TradingBot:
         # 4. 計算指標
         indicator_values = indicators.calculate_all(fast_df, slow_df)
         
+        # 4.1 更新 Discord Bot 的指標數據 (用於價格通知)
+        try:
+            from discord.bot import update_indicators
+            update_indicators(symbol, indicator_values)
+        except ImportError:
+            pass  # Discord 模組未安裝
+        
         # 4.5 更新模擬價格 (dry run 模式)
         if self.config.dry_run:
             lighter_client.set_simulated_price(indicator_values.current_price)

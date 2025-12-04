@@ -353,7 +353,7 @@ class DataFetcher:
 
             # 發送價格到 Discord (with proper error handling)
             try:
-                from discord.bot import send_notification
+                from discord.bot import send_notification, get_indicator_message
                 # 獲取市場符號
                 market_symbol = "Unknown"
                 for symbol, mid in self.config.trading.markets:
@@ -361,12 +361,17 @@ class DataFetcher:
                         market_symbol = symbol
                         break
 
-                # 構建訊息
+                # 構建基本價格訊息
                 msg = f"📊 **價格更新** - {market_symbol}\n"
                 msg += f"時間: {latest_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
                 msg += f"5m 價格: ${latest_price:.4f}\n"
                 if len(slow_df) > 0:
                     msg += f"15m 價格: ${latest_15m_price:.4f}"
+                
+                # 添加技術指標數據
+                indicator_msg = get_indicator_message(market_symbol)
+                if indicator_msg:
+                    msg += indicator_msg
 
                 # 異步發送通知 (with error callback to prevent unhandled exceptions)
                 async def safe_send_notification():
