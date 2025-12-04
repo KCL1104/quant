@@ -13,7 +13,7 @@ from decimal import Decimal
 
 # Lighter SDK imports
 from lighter import Configuration
-from lighter.signer_client import SignerClient
+from lighter.signer_client import SignerClient, CreateOrderTxReq
 from lighter.api.account_api import AccountApi
 from lighter.api.order_api import OrderApi
 from lighter.api.transaction_api import TransactionApi
@@ -52,6 +52,14 @@ class LighterClient:
     CANCEL_ALL_TIF_IMMEDIATE = SignerClient.CANCEL_ALL_TIF_IMMEDIATE
     CANCEL_ALL_TIF_SCHEDULED = SignerClient.CANCEL_ALL_TIF_SCHEDULED
     CANCEL_ALL_TIF_ABORT = SignerClient.CANCEL_ALL_TIF_ABORT
+
+    # Grouped Orders 常數
+    GROUPING_TYPE_ONE_CANCELS_THE_OTHER = SignerClient.GROUPING_TYPE_ONE_CANCELS_THE_OTHER
+    DEFAULT_28_DAY_ORDER_EXPIRY = SignerClient.DEFAULT_28_DAY_ORDER_EXPIRY
+
+    # Margin Mode 常數 (with fallback for SDK compatibility)
+    CROSS_MARGIN_MODE = getattr(SignerClient, 'CROSS_MARGIN_MODE', 0)      # 全倉模式 = 0
+    ISOLATED_MARGIN_MODE = getattr(SignerClient, 'ISOLATED_MARGIN_MODE', 1)  # 逐倉模式 = 1
     
     def __init__(self, 
                  api_private_key: str,
@@ -134,9 +142,8 @@ class LighterClient:
             # 初始化核心 SignerClient（包含所有交易功能）
             self.signer_client = SignerClient(  
                 url="https://mainnet.zklighter.elliot.ai",           # positional url  
-                private_key=self.api_private_key,    # positional private_key  
-                api_key_index=self.api_key_index,  
-                account_index=self.account_index,  
+                account_index=self.account_index,
+                api_private_keys={self.api_key_index: self.api_private_key},    # positional private_key  
             )
                         
             # 初始化 API 客戶端（用於查詢功能）
@@ -2491,6 +2498,199 @@ class LighterClient:
             
         except Exception as e:
             return self._handle_api_error("WS 創建止盈訂單", e)
+
+    async def update_leverage(
+        self,
+        market_index: int,
+        leverage: float,
+        margin_mode: int = None
+    ) -> Dict:
+        """
+        更新槓桿設置
+
+        Args:
+            market_index: 市場索引
+            leverage: 槓桿倍數 (例如: 5 表示 5x 槓桿)
+            margin_mode: 保證金模式
+                - CROSS_MARGIN_MODE (0): 全倉模式 - 所有倉位共享保證金
+                - ISOLATED_MARGIN_MODE (1): 逐倉模式 - 每個倉位獨立保證金
+                - 默認使用 CROSS_MARGIN_MODE
+
+        Returns:
+            Dict: 包含 success, tx_hash 等欄位
+        """
+        try:
+            self._ensure_initialized()
+
+            # 默認使用全倉模式
+            if margin_mode is None:
+                margin_mode = self.CROSS_MARGIN_MODE
+
+            logger.info(
+                f"更新槓桿 - 市場: {market_index}, 槓桿: {leverage}x, "
+                f"保證金模式: {'全倉' if margin_mode == self.CROSS_MARGIN_MODE else '逐倉'}"
+            )
+
+            # 調用 SDK 的 update_leverage 方法
+            # SDK 簽名: update_leverage(market_index, margin_mode, leverage)
+            result_tuple = await self.signer_client.update_leverage(
+                market_index=market_index,
+                margin_mode=margin_mode,
+                leverage=leverage
+            )
+
+            # 處理返回結果
+            # 成功時: (tx_info, api_response, None)
+            # 失敗時: (None, None, error_string)
+            tx_info, api_response, error = result_tuple
+
+            if error is not None:
+                logger.error(f"更新槓桿失敗: {error}")
+                return {
+                    "success": False,
+                    "error": error,
+                    "message": f"更新槓桿失敗: {error}"
+                }
+
+            # 成功
+            tx_hash = api_response.tx_hash if hasattr(api_response, 'tx_hash') else str(api_response)
+            logger.info(f"槓桿更新成功 - TX Hash: {tx_hash}")
+
+            return {
+                "success": True,
+                "tx_hash": tx_hash,
+                "leverage_info": {
+                    "market_index": market_index,
+                    "leverage": leverage,
+                    "margin_mode": margin_mode,
+                    "margin_mode_name": "cross" if margin_mode == self.CROSS_MARGIN_MODE else "isolated"
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"更新槓桿異常: {e}")
+            return self._handle_api_error("更新槓桿", e)
+
+    async def create_sl_tp_grouped_orders(
+        self,
+        market_index: int,
+        base_amount: float,
+        stop_loss_trigger_price: float,
+        take_profit_trigger_price: float,
+        is_long_position: bool,
+        reduce_only: bool = True
+    ) -> Dict:
+        """
+        使用 OCO 組合訂單同時創建止損和止盈
+
+        這個方法使用 SDK 的 create_grouped_orders 功能，不依賴 WebSocket，
+        止損和止盈訂單會被綁定為 OCO (One Cancels the Other)，
+        當其中一個被觸發時，另一個會自動取消。
+
+        Args:
+            market_index: 市場索引
+            base_amount: 基礎數量
+            stop_loss_trigger_price: 止損觸發價格
+            take_profit_trigger_price: 止盈觸發價格
+            is_long_position: 是否為多頭持倉 (True=做多平倉用賣單, False=做空平倉用買單)
+            reduce_only: 是否僅減倉 (默認 True)
+
+        Returns:
+            Dict: 包含 success, tx_hash, order_info 等欄位
+        """
+        try:
+            self._ensure_initialized()
+
+            logger.info(
+                f"創建止盈止損 OCO 訂單 - 市場: {market_index}, 數量: {base_amount}, "
+                f"止損: {stop_loss_trigger_price}, 止盈: {take_profit_trigger_price}, "
+                f"持倉方向: {'做多' if is_long_position else '做空'}"
+            )
+
+            # 格式化數量
+            base_amount_formatted = self._format_amount(base_amount, market_index)
+
+            # 格式化觸發價格
+            sl_trigger_formatted = self._format_price(stop_loss_trigger_price)
+            tp_trigger_formatted = self._format_price(take_profit_trigger_price)
+
+            # 根據持倉方向決定訂單方向
+            # 做多持倉 -> 平倉需要賣出 -> is_ask = True
+            # 做空持倉 -> 平倉需要買入 -> is_ask = False
+            is_ask = is_long_position
+
+            # 生成唯一的客戶端訂單索引
+            base_client_order_index = int(time.time() * 1000) % 1000000
+
+            # 創建止損訂單請求
+            stop_loss_order = CreateOrderTxReq(
+                MarketIndex=market_index,
+                ClientOrderIndex=base_client_order_index,
+                BaseAmount=base_amount_formatted,
+                Price=0,  # 市價單價格設為 0
+                IsAsk=is_ask,
+                Type=self.ORDER_TYPE_STOP_LOSS,
+                TimeInForce=self.TIME_IN_FORCE_IOC,
+                ReduceOnly=int(reduce_only),
+                TriggerPrice=sl_trigger_formatted,
+                OrderExpiry=self.DEFAULT_28_DAY_ORDER_EXPIRY
+            )
+
+            # 創建止盈訂單請求
+            take_profit_order = CreateOrderTxReq(
+                MarketIndex=market_index,
+                ClientOrderIndex=base_client_order_index + 1,
+                BaseAmount=base_amount_formatted,
+                Price=0,  # 市價單價格設為 0
+                IsAsk=is_ask,
+                Type=self.ORDER_TYPE_TAKE_PROFIT,
+                TimeInForce=self.TIME_IN_FORCE_IOC,
+                ReduceOnly=int(reduce_only),
+                TriggerPrice=tp_trigger_formatted,
+                OrderExpiry=self.DEFAULT_28_DAY_ORDER_EXPIRY
+            )
+
+            # 使用 SDK 的 create_grouped_orders 方法創建 OCO 組合訂單
+            orders = [stop_loss_order, take_profit_order]
+            result_tuple = await self.signer_client.create_grouped_orders(
+                grouping_type=self.GROUPING_TYPE_ONE_CANCELS_THE_OTHER,
+                orders=orders
+            )
+
+            # 處理返回結果
+            # 成功時: (CreateGroupedOrders, RespSendTx, None)
+            # 失敗時: (None, None, error_string)
+            grouped_order, api_response, error = result_tuple
+
+            if error is not None:
+                logger.error(f"創建止盈止損 OCO 訂單失敗: {error}")
+                return {
+                    "success": False,
+                    "error": error,
+                    "message": f"OCO 訂單創建失敗: {error}"
+                }
+
+            # 成功
+            tx_hash = api_response.tx_hash if hasattr(api_response, 'tx_hash') else str(api_response)
+            logger.info(f"止盈止損 OCO 訂單創建成功 - TX Hash: {tx_hash}")
+
+            return {
+                "success": True,
+                "tx_hash": tx_hash,
+                "order_info": {
+                    "market_index": market_index,
+                    "base_amount": base_amount,
+                    "stop_loss_trigger_price": stop_loss_trigger_price,
+                    "take_profit_trigger_price": take_profit_trigger_price,
+                    "is_long_position": is_long_position,
+                    "order_type": "oco_sl_tp",
+                    "reduce_only": reduce_only
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"創建止盈止損 OCO 訂單異常: {e}")
+            return self._handle_api_error("創建止盈止損 OCO 訂單", e)
 
     async def ws_create_limit_order(self,
                                   market_index: int,

@@ -601,7 +601,89 @@ class LighterClientAdapter:
                 message=f"止盈單失敗: {e}",
                 timestamp=datetime.now(timezone.utc)
             )
-    
+
+    async def create_sl_tp_orders(
+        self,
+        signal_type: SignalType,
+        amount: float,
+        stop_loss_price: float,
+        take_profit_price: float,
+        market_id: int = None
+    ) -> OrderResult:
+        """
+        使用 OCO 組合訂單同時創建止損和止盈
+
+        止損和止盈會被綁定為 OCO (One Cancels the Other)，
+        當其中一個被觸發時，另一個會自動取消。
+
+        Args:
+            signal_type: 訊號類型 (LONG/SHORT) - 表示原始開倉方向
+            amount: 基礎資產數量
+            stop_loss_price: 止損觸發價格
+            take_profit_price: 止盈觸發價格
+            market_id: 市場 ID（可選）
+
+        Returns:
+            OrderResult
+        """
+        await self.initialize()
+
+        if market_id is None:
+            market_id = self.config.market_id
+
+        # 根據訊號類型確定是否為做多持倉
+        is_long_position = signal_type == SignalType.LONG
+
+        if settings.dry_run:
+            return OrderResult(
+                success=True,
+                order_id="dry_run_oco_" + str(int(time.time() * 1000)),
+                filled_price=None,
+                filled_amount=amount,
+                message="模擬止盈止損 OCO 訂單成功",
+                timestamp=datetime.now(timezone.utc)
+            )
+
+        try:
+            # 調用底層客戶端的 OCO 組合訂單方法
+            result = await self._client.create_sl_tp_grouped_orders(
+                market_index=market_id,
+                base_amount=amount,
+                stop_loss_trigger_price=stop_loss_price,
+                take_profit_trigger_price=take_profit_price,
+                is_long_position=is_long_position,
+                reduce_only=True
+            )
+
+            if result.get("success"):
+                return OrderResult(
+                    success=True,
+                    order_id=result.get("tx_hash"),
+                    filled_price=None,
+                    filled_amount=amount,
+                    message="止盈止損 OCO 訂單提交成功",
+                    timestamp=datetime.now(timezone.utc)
+                )
+            else:
+                return OrderResult(
+                    success=False,
+                    order_id=None,
+                    filled_price=None,
+                    filled_amount=None,
+                    message=result.get("message", result.get("error", "止盈止損 OCO 訂單失敗")),
+                    timestamp=datetime.now(timezone.utc)
+                )
+
+        except Exception as e:
+            return OrderResult(
+                success=False,
+                order_id=None,
+                filled_price=None,
+                filled_amount=None,
+                message=f"止盈止損 OCO 訂單失敗: {e}",
+                timestamp=datetime.now(timezone.utc)
+            )
+
     async def cancel_order(self, order_id: str, market_id: int = None) -> bool:
         """取消訂單"""
         await self.initialize()
@@ -649,24 +731,46 @@ class LighterClientAdapter:
             logger.error(f"取消訂單失敗: {e}")
             return False
     
-    async def update_leverage(self, leverage: float, market_id: int = None) -> bool:
-        """更新槓桿"""
+    async def update_leverage(
+        self,
+        leverage: float,
+        market_id: int = None,
+        margin_mode: int = None
+    ) -> bool:
+        """
+        更新槓桿
+        
+        Args:
+            leverage: 槓桿倍數
+            market_id: 市場 ID（可選）
+            margin_mode: 保證金模式（可選）
+                - 0: CROSS_MARGIN_MODE (全倉模式) - 默認
+                - 1: ISOLATED_MARGIN_MODE (逐倉模式)
+        
+        Returns:
+            bool: 是否成功
+        """
         await self.initialize()
         
         if settings.dry_run:
             return True
         
         try:
-            # Lighter 的槓桿是帳戶級別的，不是市場級別的
-            # 如果實際客戶端有 update_leverage 方法，則調用它
             if hasattr(self._client, 'update_leverage'):
+                # 默認使用全倉模式 (CROSS_MARGIN_MODE = 0)
+                if margin_mode is None:
+                    margin_mode = getattr(self._client, 'CROSS_MARGIN_MODE', 0)
+                
                 result = await self._client.update_leverage(
                     market_index=market_id or self.config.market_id,
-                    leverage=leverage
+                    leverage=leverage,
+                    margin_mode=margin_mode
                 )
                 return result.get("success", True)
             return True
-        except Exception:
+        except Exception as e:
+            from utils import bot_logger as logger
+            logger.error(f"更新槓桿失敗: {e}")
             return False
     
     async def close_position(self, market_id: int = None) -> OrderResult:
@@ -683,7 +787,7 @@ class LighterClientAdapter:
                 filled_price=None,
                 filled_amount=None,
                 message="沒有持倉需要平倉",
-                timestamp=datetime.now(datetime.timezone.utc)
+                timestamp=datetime.now(timezone.utc)
             )
         
         # 根據持倉方向決定平倉方向

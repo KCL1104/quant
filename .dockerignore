@@ -28,3 +28,7 @@ logs/
 # Docker
 Dockerfile
 .dockerignore
+
+#codebuff
+codebuff.json
+knowledge.md

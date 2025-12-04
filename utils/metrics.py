@@ -5,7 +5,7 @@
 import json
 from pathlib import Path
 from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict
 from collections import defaultdict
 import numpy as np
@@ -116,10 +116,10 @@ class MetricsTracker:
     
     def update_equity(self, equity: float):
         """更新權益曲線"""
-        self.equity_curve.append((datetime.now(datetime.timezone.utc), equity))
+        self.equity_curve.append((datetime.now(timezone.utc), equity))
         
         # 只保留最近 30 天
-        cutoff = datetime.now(datetime.timezone.utc) - timedelta(days=30)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
         self.equity_curve = [
             (t, e) for t, e in self.equity_curve if t > cutoff
         ]
@@ -132,7 +132,7 @@ class MetricsTracker:
             days: 計算最近 N 天的指標，None 表示全部
         """
         if days:
-            cutoff = datetime.now(datetime.timezone.utc) - timedelta(days=days)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
             trades = [t for t in self.trades if t.timestamp > cutoff]
         else:
             trades = self.trades

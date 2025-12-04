@@ -1,4 +1,5 @@
 from .settings import (
+    MarginMode,
     settings,
     Settings,
     MarketRegime,

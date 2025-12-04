@@ -9,6 +9,8 @@ from .indicators import (
 from .market_regime import (
     MarketRegimeDetector,
     market_detector,
+    get_market_detector,
+    create_detector,
     MarketState,
 )
 from .risk_manager import (
@@ -34,6 +36,8 @@ __all__ = [
     # Market Regime
     "MarketRegimeDetector",
     "market_detector",
+    "get_market_detector",
+    "create_detector",
     "MarketState",
     # Risk Manager
     "RiskManager",

@@ -3,7 +3,7 @@
 根據 ADX、ATR、BB 等指標判斷當前市場是趨勢市還是震盪市
 """
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Dict
 
 from config import settings, MarketRegime
 from core.indicators import IndicatorValues
@@ -22,10 +22,15 @@ class MarketState:
 
 
 class MarketRegimeDetector:
-    """市場狀態檢測器"""
+    """市場狀態檢測器
     
-    def __init__(self):
+    注意：每個市場應該有自己的檢測器實例，以避免狀態污染。
+    使用 create_detector() 工廠方法創建新實例。
+    """
+    
+    def __init__(self, market_id: int = None):
         self.config = settings
+        self.market_id = market_id  # 可選的市場標識
         self._last_regime = MarketRegime.UNKNOWN
         self._regime_count = 0  # 連續相同狀態的次數
     
@@ -193,5 +198,38 @@ class MarketRegimeDetector:
         self._regime_count = 0
 
 
-# 全域市場狀態檢測器
+# 全域市場狀態檢測器（用於單市場模式或向後兼容）
 market_detector = MarketRegimeDetector()
+
+# 市場檢測器緩存（用於多市場模式）
+_market_detectors: Dict[int, MarketRegimeDetector] = {}
+
+
+def get_market_detector(market_id: int) -> MarketRegimeDetector:
+    """
+    獲取指定市場的檢測器實例
+    
+    多市場模式下，每個市場應該有自己的檢測器以避免狀態污染。
+    
+    Args:
+        market_id: 市場 ID
+        
+    Returns:
+        該市場的 MarketRegimeDetector 實例
+    """
+    if market_id not in _market_detectors:
+        _market_detectors[market_id] = MarketRegimeDetector(market_id=market_id)
+    return _market_detectors[market_id]
+
+
+def create_detector(market_id: int = None) -> MarketRegimeDetector:
+    """
+    創建新的市場狀態檢測器實例
+    
+    Args:
+        market_id: 可選的市場 ID
+        
+    Returns:
+        新的 MarketRegimeDetector 實例
+    """
+    return MarketRegimeDetector(market_id=market_id)

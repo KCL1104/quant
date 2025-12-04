@@ -6,7 +6,7 @@ import asyncio
 import pandas as pd
 import numpy as np
 from typing import Optional, Dict, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 
 from config import settings
@@ -80,7 +80,7 @@ class DataFetcher:
             # 直接通过HTTP API预加载更多数据
             import aiohttp
             import time
-            from datetime import datetime, timedelta
+            from datetime import datetime, timedelta, timezone
 
             headers = {"accept": "application/json"}
             all_candlesticks = []
@@ -145,8 +145,8 @@ class DataFetcher:
                 cache_key_slow = f"{market_id}_15m"
                 self._candle_cache[cache_key_fast] = df_fast
                 self._candle_cache[cache_key_slow] = df_slow
-                self._last_fetch_time[cache_key_fast] = datetime.now(datetime.timezone.utc)
-                self._last_fetch_time[cache_key_slow] = datetime.now(datetime.timezone.utc)
+                self._last_fetch_time[cache_key_fast] = datetime.now(timezone.utc)
+                self._last_fetch_time[cache_key_slow] = datetime.now(timezone.utc)
 
                 # 显示最新价格信息
                 if len(df_fast) > 0:
@@ -206,7 +206,7 @@ class DataFetcher:
             candle_api = CandlestickApi(self._api_client)
             
             # 計算時間範圍
-            end_time = int(datetime.now(datetime.timezone.utc).timestamp())
+            end_time = int(datetime.now(timezone.utc).timestamp())
             start_time = end_time - (self.TIMEFRAME_SECONDS[timeframe] * count)
             
             response = await candle_api.candlesticks(
@@ -238,7 +238,7 @@ class DataFetcher:
             
             # 更新緩存
             self._candle_cache[cache_key] = df
-            self._last_fetch_time[cache_key] = datetime.now(datetime.timezone.utc)
+            self._last_fetch_time[cache_key] = datetime.now(timezone.utc)
             
             return df
             
@@ -255,7 +255,7 @@ class DataFetcher:
         
         # 緩存有效期為時間框架的一半
         cache_duration = self.TIMEFRAME_SECONDS[timeframe] / 2
-        elapsed = (datetime.now(datetime.timezone.utc) - self._last_fetch_time[cache_key]).total_seconds()
+        elapsed = (datetime.now(timezone.utc) - self._last_fetch_time[cache_key]).total_seconds()
         
         return elapsed < cache_duration
     
@@ -274,7 +274,7 @@ class DataFetcher:
         volumes = []
         
         current_price = base_price
-        current_time = datetime.now(datetime.timezone.utc) - timedelta(minutes=count * 5)
+        current_time = datetime.now(timezone.utc) - timedelta(minutes=count * 5)
         
         for i in range(count):
             # 隨機價格變動
@@ -351,7 +351,7 @@ class DataFetcher:
                 latest_15m_time = slow_df['timestamp'].iloc[-1]
                 print(f"[Market {market_id}] 15m 最新價格: ${latest_15m_price:.4f} (時間: {latest_15m_time.strftime('%H:%M:%S')}) | 15m K線數: {len(slow_df)}條")
 
-            # 發送價格到 Discord
+            # 發送價格到 Discord (with proper error handling)
             try:
                 from discord.bot import send_notification
                 # 獲取市場符號
@@ -368,9 +368,15 @@ class DataFetcher:
                 if len(slow_df) > 0:
                     msg += f"15m 價格: ${latest_15m_price:.4f}"
 
-                # 異步發送通知
-                asyncio.create_task(send_notification(msg))
-            except Exception as e:
+                # 異步發送通知 (with error callback to prevent unhandled exceptions)
+                async def safe_send_notification():
+                    try:
+                        await send_notification(msg)
+                    except Exception:
+                        pass  # 靜默失敗，不影響交易
+                
+                asyncio.create_task(safe_send_notification())
+            except Exception:
                 # 靜默失敗，不影響數據獲取
                 pass
 

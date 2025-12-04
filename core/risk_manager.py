@@ -3,7 +3,7 @@
 處理動態槓桿、風險控制、回撤保護等
 """
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from collections import deque
 
@@ -84,19 +84,19 @@ class RiskManager:
     
     def _get_day_start(self) -> datetime:
         """取得今天 UTC 0:00"""
-        now = datetime.now(datetime.timezone.utc)
-        return datetime(now.year, now.month, now.day, tzinfo=datetime.timezone.utc)
+        now = datetime.now(timezone.utc)
+        return datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
     
     def _get_week_start(self) -> datetime:
         """取得本週一 UTC 0:00"""
-        now = datetime.now(datetime.timezone.utc)
+        now = datetime.now(timezone.utc)
         days_since_monday = now.weekday()
         week_start = now - timedelta(days=days_since_monday)
-        return datetime(week_start.year, week_start.month, week_start.day, tzinfo=datetime.timezone.utc)
+        return datetime(week_start.year, week_start.month, week_start.day, tzinfo=timezone.utc)
     
     def _check_reset_periods(self):
         """檢查是否需要重置日/週統計"""
-        now = datetime.now(datetime.timezone.utc)
+        now = datetime.now(timezone.utc)
         
         # 日重置
         current_day_start = self._get_day_start()
@@ -133,7 +133,7 @@ class RiskManager:
         is_win = pnl > 0
         
         record = TradeRecord(
-            timestamp=datetime.now(datetime.timezone.utc),
+            timestamp=datetime.now(timezone.utc),
             pnl=pnl,
             pnl_percent=pnl_percent,
             is_win=is_win,
@@ -167,7 +167,7 @@ class RiskManager:
         # 設置冷卻期
         self._set_cooldown_if_needed(pnl)
         
-        self.last_trade_time = datetime.now(datetime.timezone.utc)
+        self.last_trade_time = datetime.now(timezone.utc)
     
     def _set_cooldown_if_needed(self, pnl: float):
         """根據虧損設置冷卻期"""
@@ -179,7 +179,7 @@ class RiskManager:
                 # 一般虧損，短冷卻
                 cooldown_seconds = self.config.trading.cooldown_after_loss
             
-            self.cooldown_until = datetime.now(datetime.timezone.utc) + timedelta(seconds=cooldown_seconds)
+            self.cooldown_until = datetime.now(timezone.utc) + timedelta(seconds=cooldown_seconds)
     
     def get_win_rate(self, lookback: int = 20) -> float:
         """
@@ -271,8 +271,8 @@ class RiskManager:
         self._check_reset_periods()
         
         # 檢查冷卻期
-        if self.cooldown_until and datetime.now(datetime.timezone.utc) < self.cooldown_until:
-            remaining = (self.cooldown_until - datetime.now(datetime.timezone.utc)).seconds
+        if self.cooldown_until and datetime.now(timezone.utc) < self.cooldown_until:
+            remaining = (self.cooldown_until - datetime.now(timezone.utc)).seconds
             return False, f"冷卻期中，剩餘 {remaining} 秒"
         
         # 檢查日內虧損
@@ -312,7 +312,7 @@ class RiskManager:
         
         # 連續快速虧損
         if self.consecutive_losses >= 3 and self.last_trade_time:
-            time_since_last = (datetime.now(datetime.timezone.utc) - self.last_trade_time).seconds
+            time_since_last = (datetime.now(timezone.utc) - self.last_trade_time).seconds
             if time_since_last < 1800:  # 30 分鐘內
                 return True, "30 分鐘內連續虧損 3 次"
         

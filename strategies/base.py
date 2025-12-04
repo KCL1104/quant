@@ -5,7 +5,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from config import settings, SignalType, StrategyType, MarketRegime
 from core.indicators import IndicatorValues
@@ -128,7 +128,7 @@ class BaseStrategy(ABC):
             take_profit=stops.take_profit,
             confidence=confidence,
             reason=reason,
-            timestamp=datetime.now(datetime.timezone.utc)
+            timestamp=datetime.now(timezone.utc)
         )
         
         self.last_signal = signal

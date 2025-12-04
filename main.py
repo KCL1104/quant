@@ -17,6 +17,7 @@ from config import settings, MarketRegime, SignalType, StrategyType
 from core import (
     indicators,
     market_detector,
+    get_market_detector,
     RiskManager,
     position_manager,
     IndicatorValues,
@@ -285,10 +286,13 @@ class TradingBot:
         }
         
     async def _send_discord_notification(self, message: str):
-        """發送 Discord 通知"""
+        """發送 Discord 通知（安全版本，不會拋出異常）"""
         try:
             from discord.bot import send_notification
             await send_notification(message)
+        except ImportError:
+            # Discord 模組未安裝或未配置
+            pass
         except Exception as e:
             logger.error(f"發送 Discord 通知失敗: {e}")
     
@@ -369,6 +373,7 @@ class TradingBot:
                 )
                 # 等待一小段時間讓 Discord Bot 連接成功
                 # 使用 create_task 來發送通知，避免阻塞主線程
+                # 添加錯誤處理以防止未處理的異常導致事件循環崩潰
                 async def send_start_notification():
                     await asyncio.sleep(5)
                     try:
@@ -414,7 +419,12 @@ class TradingBot:
 
         # 並行運行所有任務
         try:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # 檢查並記錄任何異常
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    task_name = tasks[i].get_name() if hasattr(tasks[i], 'get_name') else f"Task-{i}"
+                    logger.error(f"任務 {task_name} 發生錯誤: {result}")
         except Exception as e:
             logger.error(f"交易系統錯誤: {e}")
         
@@ -520,8 +530,9 @@ class TradingBot:
         if self.config.dry_run:
             lighter_client.set_simulated_price(indicator_values.current_price)
         
-        # 5. 判斷市場狀態
-        market_state = market_detector.detect(indicator_values)
+        # 5. 判斷市場狀態 (使用該市場專屬的檢測器，避免多市場狀態污染)
+        detector = get_market_detector(market_id)
+        market_state = detector.detect(indicator_values)
         logger.debug(f"[{symbol}] 市場狀態: {market_state.regime.value} - {market_state.description}")
         
         # 6. 檢查現有持倉
@@ -692,8 +703,12 @@ class TradingBot:
             logger.warning(f"[{symbol}] 倉位計算為 0，無法開倉")
             return
         
-        # 更新槓桿
-        await lighter_client.update_leverage(leverage, market_id=market_id)
+        # 更新槓桿 (使用配置中的保證金模式)
+        await lighter_client.update_leverage(
+            leverage,
+            market_id=market_id,
+            margin_mode=self.config.leverage.margin_mode
+        )
 
         logger.info(
             f"[{symbol}] 開倉: {signal.signal_type.value} | "
@@ -752,33 +767,25 @@ class TradingBot:
             logger.error(f"[{symbol}] 開倉失敗: {result.message}")
     
     async def _set_sl_tp_orders_for_market(self, symbol: str, market_id: int, signal: Signal, amount: float):
-        """為指定市場設置止損止盈單"""
+        """為指定市場設置止損止盈單 - 使用 OCO 組合訂單"""
 
-        # 止損單
-        sl_result = await lighter_client.create_stop_loss_order(
+        # 使用 OCO 組合訂單同時設置止損和止盈
+        # 這樣當一個被觸發時，另一個會自動取消
+        result = await lighter_client.create_sl_tp_orders(
             signal_type=signal.signal_type,
             amount=amount,
-            trigger_price=signal.stop_loss,
+            stop_loss_price=signal.stop_loss,
+            take_profit_price=signal.take_profit,
             market_id=market_id
         )
 
-        if sl_result.success:
-            logger.debug(f"[{symbol}] 止損單設置成功: {signal.stop_loss:.2f}")
+        if result.success:
+            logger.debug(
+                f"[{symbol}] 止盈止損 OCO 訂單設置成功 - "
+                f"止損: {signal.stop_loss:.2f}, 止盈: {signal.take_profit:.2f}"
+            )
         else:
-            logger.warning(f"[{symbol}] 止損單設置失敗: {sl_result.message}")
-
-        # 止盈單
-        tp_result = await lighter_client.create_take_profit_order(
-            signal_type=signal.signal_type,
-            amount=amount,
-            trigger_price=signal.take_profit,
-            market_id=market_id
-        )
-
-        if tp_result.success:
-            logger.debug(f"[{symbol}] 止盈單設置成功: {signal.take_profit:.2f}")
-        else:
-            logger.warning(f"[{symbol}] 止盈單設置失敗: {tp_result.message}")
+            logger.warning(f"[{symbol}] 止盈止損 OCO 訂單設置失敗: {result.message}")
     
     async def _close_position_for_market(self, symbol: str, market_id: int, reason: str):
         """平倉指定市場"""
@@ -895,8 +902,11 @@ class TradingBot:
             logger.warning("倉位計算為 0，無法開倉")
             return
         
-        # 更新槓桿
-        await lighter_client.update_leverage(leverage)
+        # 更新槓桿 (使用配置中的保證金模式)
+        await lighter_client.update_leverage(
+            leverage,
+            margin_mode=self.config.leverage.margin_mode
+        )
         
         logger.info(
             f"開倉: {signal.signal_type.value} | "

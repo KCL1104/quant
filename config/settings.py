@@ -73,11 +73,29 @@ class ATRConfig(BaseSettings):
     ranging_threshold: float = 0.015    # 震盪市 ATR% 閾值
 
 
+class MarginMode(int, Enum):
+    """保證金模式"""
+    CROSS = 0      # 全倉模式 - 所有倉位共享保證金，資金效率高
+    ISOLATED = 1   # 逐倉模式 - 每個倉位獨立保證金，風險隔離
+
+
 class LeverageConfig(BaseSettings):
     """槓桿配置"""
-    base_leverage: float = 2.0    # 基準槓桿
-    max_leverage: float = 5.0     # 最大槓桿
-    min_leverage: float = 1.0     # 最小槓桿
+    base_leverage: float = Field(default=2.0, validation_alias="LEVERAGE_BASE")      # 基準槓桿
+    max_leverage: float = Field(default=5.0, validation_alias="LEVERAGE_MAX")        # 最大槓桿
+    min_leverage: float = Field(default=1.0, validation_alias="LEVERAGE_MIN")        # 最小槓桿
+    
+    # 保證金模式: 0 = 全倉 (cross), 1 = 逐倉 (isolated)
+    # 全倉模式: 所有倉位共享保證金，資金效率高，但一個倉位的虧損可能影響其他倉位
+    # 逐倉模式: 每個倉位獨立保證金，風險隔離，但資金效率較低
+    margin_mode: int = Field(default=0, validation_alias="MARGIN_MODE")
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    
+    @property
+    def margin_mode_name(self) -> str:
+        """獲取保證金模式名稱"""
+        return "cross" if self.margin_mode == 0 else "isolated"
 
 
 class RiskConfig(BaseSettings):
