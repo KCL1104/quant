@@ -81,6 +81,11 @@ async def stat(interaction: discord.Interaction):
 @tree.command()
 async def status(interaction: discord.Interaction):
     """獲取實時交易狀態報告（從 API 獲取最新數據）"""
+    global trading_bot_instance
+    
+    # Debug: 打印狀態
+    print(f"[Discord Bot] /status 被觸發, trading_bot_instance={trading_bot_instance is not None}")
+    
     if not trading_bot_instance:
         await interaction.response.send_message("❌ 交易機器人未連接")
         return
@@ -230,3 +235,6 @@ def run_discord_bot(token, bot_instance):
     
     # 在異步循環中運行
     asyncio.create_task(client.start(token))
+    
+    # 打印確認信息
+    print(f"[Discord Bot] trading_bot_instance 已設置: {trading_bot_instance is not None}")
