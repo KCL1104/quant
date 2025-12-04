@@ -232,7 +232,7 @@ class Settings(BaseSettings):
     
     # 全域設定
     debug: bool = Field(default=False, env="DEBUG")
-    dry_run: bool = Field(default=True, env="DRY_RUN")  # 模擬交易模式
+    dry_run: bool = False  # 實盤交易模式 (預設，不讀取 env)
     
     class Config:
         # Pydantic V1 style config, kept for compatibility if needed, but V2 uses model_config

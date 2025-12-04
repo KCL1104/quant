@@ -36,6 +36,7 @@ async def on_ready():
         if GUILD_ID:
             # 優先同步到指定伺服器 (立即生效)
             guild = discord.Object(id=int(GUILD_ID))
+            tree.copy_global_to(guild)  # 複製全域指令到 guild
             synced = await tree.sync(guild=guild)
             print(f"已同步 {len(synced)} 個指令到伺服器 {GUILD_ID} (立即生效)")
         
@@ -78,13 +79,13 @@ async def stat(interaction: discord.Interaction):
       
     await interaction.response.send_message(embed=embed)  
 
-@tree.command()
-async def status(interaction: discord.Interaction):
+@tree.command(name="status_now")
+async def status_now(interaction: discord.Interaction):
     """獲取實時交易狀態報告（從 API 獲取最新數據）"""
     global trading_bot_instance
     
     # Debug: 打印狀態
-    print(f"[Discord Bot] /status 被觸發, trading_bot_instance={trading_bot_instance is not None}")
+    print(f"[Discord Bot] /status_now 被觸發, trading_bot_instance={trading_bot_instance is not None}")
     
     if not trading_bot_instance:
         await interaction.response.send_message("❌ 交易機器人未連接")
